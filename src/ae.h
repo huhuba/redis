@@ -70,41 +70,67 @@ typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 
 /* File event structure */
 typedef struct aeFileEvent {
+    // 事件掩码，用来记录发生的事件，
+    // 可选标志位为AE_READABLE(1)、AE_WRITABLE(2)、AE_BARRIER(4)
     int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
+    // 如果发生可读事件，会调用rfileProc指向的函数进行处理
     aeFileProc *rfileProc;
+    // 如果发生可写事件，会调用wfileProc指向的函数进行处理
     aeFileProc *wfileProc;
+    // 指向对应的客户端对象
     void *clientData;
 } aeFileEvent;
 
 /* Time event structure */
 typedef struct aeTimeEvent {
+    // 唯一标识，通过eventLoop->timeEventNextId字段计算得来
     long long id; /* time event identifier. */
+    // 时间事件触发的时间戳（微秒级别）
     monotime when;
-    aeTimeProc *timeProc;
-    aeEventFinalizerProc *finalizerProc;
-    void *clientData;
-    struct aeTimeEvent *prev;
-    struct aeTimeEvent *next;
+    aeTimeProc *timeProc; // 处理该时间事件的函数
+    aeEventFinalizerProc *finalizerProc;// 删除时间事件之前会调用该函数
+    void *clientData;// 该时间事件关联的客户端实例
+    struct aeTimeEvent *prev;// 前指针
+    struct aeTimeEvent *next;// 后指针
+    // 当前时间事件被引用的次数，要释放该aeTimeEvent实例，需要refcount为0
     int refcount; /* refcount to prevent timer events from being
   		   * freed in recursive time event calls. */
 } aeTimeEvent;
 
-/* A fired event */
+/* 一个激发的事件
+ * A fired event */
 typedef struct aeFiredEvent {
+    /**
+     * 文件描述符
+     */
     int fd;
+    /**
+     *
+     */
     int mask;
 } aeFiredEvent;
 
-/* State of an event based program */
+/*一个aeEventLoop代表一个事件循环？一个Reactor模型？
+ * 保存有该循环需要处理，监听的所有的事件信息：事件数量，所有的事件，激活的事件，文件事件，时间事件等
+ * 基于事件的程序的状态，是 Redis 事件驱动的核心结构体
+ * State of an event based program */
 typedef struct aeEventLoop {
-    int maxfd;   /* highest file descriptor currently registered */
-    int setsize; /* max number of file descriptors tracked */
-    long long timeEventNextId;
-    aeFileEvent *events; /* Registered events */
-    aeFiredEvent *fired; /* Fired events */
-    aeTimeEvent *timeEventHead;
+    int maxfd;   /* 当前注册的文件描述符的最大值。highest file descriptor currently registered */
+    int setsize; /* 能够注册的文件描述符个数上限。max number of file descriptors tracked */
+    long long timeEventNextId;//用于计算时间事件的唯一标识
+    //events指向了一个网络事件数组，记录了已经注册的网络事件，数组长度为setsize
+    aeFileEvent *events; /* 已注册事件集合。 Registered events */
+    //fired数组记录了被触发的网络事件
+    aeFiredEvent *fired; /* 激发的事件集合.Fired events */
+    // timeEventHead指向了时间事件链表的头节点
+    aeTimeEvent *timeEventHead;/*时间事件集合 */
+    // 停止的标识符，设置为1表示aeEventLoop事件循环已停止
     int stop;
-    void *apidata; /* This is used for polling API specific data */
+    // Redis在不同平台会使用4种不同的I/O多路复用模型（evport、epoll、kueue、select），
+    // apidata字段是对这四种模型的进一步封装，指向aeApiState一个实例
+    void *apidata; /* 用于轮询API特定数据.This is used for polling API specific data */
+    // Redis主线程阻塞等待网络事件时，会在阻塞之前调用beforesleep函数，
+    // 在被唤醒之后调用aftersleep函数
     aeBeforeSleepProc *beforesleep;
     aeBeforeSleepProc *aftersleep;
     int flags;
