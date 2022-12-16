@@ -91,8 +91,10 @@ int listMatchObjects(void *a, void *b) {
 /* This function links the client to the global linked list of clients.
  * unlinkClient() does the opposite, among other things. */
 void linkClient(client *c) {
-    listAddNodeTail(server.clients,c);
-    /* Note that we remember the linked list node where the client is stored,
+    listAddNodeTail(server.clients,c);//将客户端实例添加到链表尾部
+    /* 注意，我们记住了存储客户端的链接列表节点，这样在unlinkClient（）中删除客户端将不需要线性扫描，
+     * 而只需要一个恒定的时间操作。
+     * Note that we remember the linked list node where the client is stored,
      * this way removing the client in unlinkClient() will not require
      * a linear scan, but just a constant time operation. */
     c->client_list_node = listLast(server.clients);
@@ -120,23 +122,24 @@ int authRequired(client *c) {
 }
 
 client *createClient(connection *conn) {
-    client *c = zmalloc(sizeof(client));
+    client *c = zmalloc(sizeof(client));// 创建client实例
 
     /* passing NULL as conn it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed
      * in the context of a client. When commands are executed in other
      * contexts (for instance a Lua script) we need a non connected client. */
-    if (conn) {
-        connEnableTcpNoDelay(conn);
+    if (conn) {// 对新建连接进行一些列配置
+        connEnableTcpNoDelay(conn);// 设置TCP_NODELAY
         if (server.tcpkeepalive)
-            connKeepAlive(conn,server.tcpkeepalive);
-        connSetReadHandler(conn, readQueryFromClient);
-        connSetPrivateData(conn, c);
+            connKeepAlive(conn,server.tcpkeepalive);// 设置keeplive
+        connSetReadHandler(conn, readQueryFromClient);// 调用CT_Socket->set_read_handler回调函数
+        connSetPrivateData(conn, c);// 设置connection->private_data，与client绑定
     }
     c->buf = zmalloc(PROTO_REPLY_CHUNK_BYTES);
-    selectDb(c,0);
+    selectDb(c,0);// 默认使用0号DB
     uint64_t client_id;
-    atomicGetIncr(server.next_client_id, client_id, 1);
+    atomicGetIncr(server.next_client_id, client_id, 1);// 自增生成client.id
+    // 初始化client实例的各个字段
     c->id = client_id;
     c->resp = 2;
     c->conn = conn;
@@ -215,6 +218,7 @@ client *createClient(connection *conn) {
     listSetMatchMethod(c->pubsub_patterns,listMatchObjects);
     c->mem_usage_bucket = NULL;
     c->mem_usage_bucket_node = NULL;
+    // 将client记录到server.clients列表中
     if (conn) linkClient(c);
     initClientMultiState(c);
     return c;
@@ -1300,7 +1304,7 @@ void acceptCommonHandler(connection *conn, int flags, char *ip) {
     client *c;
     char conninfo[100];
     UNUSED(ip);
-
+    // 检查connection状态是否处于CONN_STATE_ACCEPTING
     if (connGetState(conn) != CONN_STATE_ACCEPTING) {
         serverLog(LL_VERBOSE,
             "Accepted client connection in error state: %s (conn: %s)",
@@ -1310,8 +1314,12 @@ void acceptCommonHandler(connection *conn, int flags, char *ip) {
         return;
     }
 
-    /* Limit the number of connections we take at the same time.
-     *
+    /*
+     * 限制我们同时使用的连接数。准入控制将在创建客户端并调用connAccept（）之前发生，
+     * 因为如果拒绝，我们甚至不想启动传输级别协商。
+     * 检查当前连接数是否已经达到server.maxclients指定的连接上限，这里的
+     * maxclients是当前Redis实例与客户端以及集群其他实例之间的总连接数
+     * Limit the number of connections we take at the same time.
      * Admission control will happen before a client is created and connAccept()
      * called, because we don't want to even start transport-level negotiation
      * if rejected. */
@@ -1336,7 +1344,13 @@ void acceptCommonHandler(connection *conn, int flags, char *ip) {
         return;
     }
 
-    /* Create connection and client */
+    /*
+     * 调用createClient()创建一个client实例，并注册监听新建连接的可读事件，
+     * 对应的处理函数为ae_handler。同时将readQueryFromClient注册为
+     * ConnectionType实例的set_read_handler回调函数，从名字可以看出，
+     * readQueryFromClient函数可以读取客户端发来的请求数据。client实例创建
+     * 完成之后，会被添加到当前Redis实例的客户端链表中，等待后续使用。
+     * Create connection and client */
     if ((c = createClient(conn)) == NULL) {
         serverLog(LL_WARNING,
             "Error registering fd event for the new client: %s (conn: %s)",
@@ -1349,7 +1363,16 @@ void acceptCommonHandler(connection *conn, int flags, char *ip) {
     /* Last chance to keep flags */
     c->flags |= flags;
 
-    /* Initiate accept.
+    /* 启动接受。
+     * 注意，connAccept（）在这里可以自由完成两件事：
+     * 1.立即调用clientAcceptHandler（）；
+     * 2.安排将来调用clientAcceptHandler（）。
+     * 因此，我们以后不能再做其他事情了。
+     * 这里有点绕，connAccept()函数会调用conn->type->accept()函数，
+     * CT_Socket.accept字段指向的是connSocketAccept函数，该函数会将连接状态切
+     * 换为CONN_STATE_CONNECTED状态，并直接调用传入的clientAcceptHandler
+     * clientAcceptHandler()函数中并没有什么有用的功能，这里不展开
+     * Initiate accept.
      *
      * Note that connAccept() is free to do two things here:
      * 1. Call clientAcceptHandler() immediately;

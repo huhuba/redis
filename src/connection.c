@@ -87,7 +87,9 @@ ConnectionType *connectionByType(const char *typename) {
     return NULL;
 }
 
-/* Cache TCP connection type, query it by string once */
+/*
+ * 缓存TCP连接类型，按字符串查询一次
+ * Cache TCP connection type, query it by string once */
 ConnectionType *connectionTypeTcp() {
     static ConnectionType *ct_tcp = NULL;
 
@@ -100,7 +102,8 @@ ConnectionType *connectionTypeTcp() {
     return ct_tcp;
 }
 
-/* Cache TLS connection type, query it by string once */
+/* 缓存TLS连接类型，按字符串查询一次
+ * Cache TLS connection type, query it by string once */
 ConnectionType *connectionTypeTls() {
     static ConnectionType *ct_tls = NULL;
     static int cached = 0;
@@ -115,7 +118,8 @@ ConnectionType *connectionTypeTls() {
     return ct_tls;
 }
 
-/* Cache Unix connection type, query it by string once */
+/* 缓存Unix连接类型，按字符串查询一次
+ * Cache Unix connection type, query it by string once */
 ConnectionType *connectionTypeUnix() {
     static ConnectionType *ct_unix = NULL;
 
@@ -155,7 +159,9 @@ void connTypeCleanupAll() {
     }
 }
 
-/* walk all the connection types until has pending data */
+/* 返回挂起的数据
+ * 遍历所有连接类型，直到有挂起的数据
+ * walk all the connection types until has pending data */
 int connTypeHasPendingData(void) {
     ConnectionType *ct;
     int type;
@@ -171,7 +177,8 @@ int connTypeHasPendingData(void) {
     return ret;
 }
 
-/* walk all the connection types and process pending data for each connection type */
+/* 遍历所有连接类型并处理每个连接类型的挂起数据
+ * walk all the connection types and process pending data for each connection type */
 int connTypeProcessPendingData(void) {
     ConnectionType *ct;
     int type;

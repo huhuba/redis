@@ -69,16 +69,22 @@ static inline int connHasRefs(connection *conn) {
     return conn->refs;
 }
 
-/* Helper for connection implementations to call handlers:
+/* 连接实现调用处理程序的帮助程序：
+ * 1.增加引用以保护连接。
+ * 2.执行处理程序（如果已设置）。
+ * 3.如果refs==0，则减少refs并执行延迟关闭。
+ *
+ * Helper for connection implementations to call handlers:
  * 1. Increment refs to protect the connection.
  * 2. Execute the handler (if set).
  * 3. Decrement refs and perform deferred close, if refs==0.
  */
 static inline int callHandler(connection *conn, ConnectionCallbackFunc handler) {
-    connIncrRefs(conn);
-    if (handler) handler(conn);
-    connDecrRefs(conn);
+    connIncrRefs(conn);//增加连接引用
+    if (handler) handler(conn);//处理执行程序
+    connDecrRefs(conn);//处理程序过后，减少引用
     if (conn->flags & CONN_FLAG_CLOSE_SCHEDULED) {
+        //如果引用为0了，则关闭连接
         if (!connHasRefs(conn)) connClose(conn);
         return 0;
     }

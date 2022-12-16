@@ -73,7 +73,10 @@ static ConnectionType CT_Socket;
  * 3. The container_of() approach is anyway risky because connections may
  * be embedded in different structs, not just client.
  */
-
+/**
+ * 创建一个连接并返回该连接
+ * @return
+ */
 static connection *connCreateSocket(void) {
     connection *conn = zcalloc(sizeof(connection));
     conn->type = &CT_Socket;
@@ -82,7 +85,11 @@ static connection *connCreateSocket(void) {
     return conn;
 }
 
-/* Create a new socket-type connection that is already associated with
+/* 创建已与接受的连接关联的新套接字类型连接。在调用connAccept（）并调用连接级接受处理程序之前，
+ * 套接字尚未准备好进行IO。调用方应使用connGetState（）
+ * 并验证创建的连接是否处于错误状态（这对于套接字连接是不可能的，但对于其他协议是可能的）
+ *
+ * Create a new socket-type connection that is already associated with
  * an accepted connection.
  *
  * The socket is not ready for I/O until connAccept() was called and
@@ -210,7 +217,8 @@ static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_hand
     return ret;
 }
 
-/* Register a write handler, to be called when the connection is writable.
+/* 注册一个写程序
+ * Register a write handler, to be called when the connection is writable.
  * If NULL, the existing handler is removed.
  *
  * The barrier flag indicates a write barrier is requested, resulting with
@@ -234,25 +242,34 @@ static int connSocketSetWriteHandler(connection *conn, ConnectionCallbackFunc fu
     return C_OK;
 }
 
-/* Register a read handler, to be called when the connection is readable.
+/* 注册一个读处理程序，当连接可读时调用。如果为NULL，则删除现有处理程序。
+ * Register a read handler, to be called when the connection is readable.
  * If NULL, the existing handler is removed.
  */
 static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc func) {
     if (func == conn->read_handler) return C_OK;
 
     conn->read_handler = func;
-    if (!conn->read_handler)
+        if (!conn->read_handler)// 未设置read_handler就不再监听可读事件
         aeDeleteFileEvent(server.el,conn->fd,AE_READABLE);
     else
         if (aeCreateFileEvent(server.el,conn->fd,
                     AE_READABLE,conn->type->ae_handler,conn) == AE_ERR) return C_ERR;
     return C_OK;
 }
-
+/*
+ * 返回连接的最后一个错误
+ */
 static const char *connSocketGetLastError(connection *conn) {
     return strerror(conn->last_errno);
 }
-
+/**
+ * Socket事件处理器
+ * @param el-EventLoop
+ * @param fd-文件描述符
+ * @param clientData-
+ * @param mask-监听类型
+ */
 static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientData, int mask)
 {
     UNUSED(el);
@@ -260,23 +277,31 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
     connection *conn = clientData;
 
     if (conn->state == CONN_STATE_CONNECTING &&
-            (mask & AE_WRITABLE) && conn->conn_handler) {
+            (mask & AE_WRITABLE) && conn->conn_handler) {//处理可写类型
 
         int conn_error = anetGetError(conn->fd);
-        if (conn_error) {
+        if (conn_error) {//处理错误，并设置连接状态为error.
             conn->last_errno = conn_error;
             conn->state = CONN_STATE_ERROR;
         } else {
-            conn->state = CONN_STATE_CONNECTED;
+            conn->state = CONN_STATE_CONNECTED;//设置连接状态为已经连接成功
         }
-
+        //没有写事件，就把写事件删除
         if (!conn->write_handler) aeDeleteFileEvent(server.el,conn->fd,AE_WRITABLE);
-
+        //调用处理器
         if (!callHandler(conn, conn->conn_handler)) return;
         conn->conn_handler = NULL;
     }
 
-    /* Normally we execute the readable event first, and the writable
+    /*
+     * 通常，我们先执行可读事件，然后再执行可写事件。
+     * 这很有用，因为有时我们可以在处理查询后立即提供查询的答复。
+     * 然而，如果在掩码中设置了WRITE_BARRIER，
+     * 我们的应用程序会要求我们执行相反的操作(先写后读)：永远不要在可读事件之后触发可写事件。
+     * 在这种情况下，我们反转调用。
+     * 例如，当我们想在beforeSleep（）钩子中做一些事情时，
+     * 这很有用，比如在回复客户机之前将文件同步到磁盘。
+     * Normally we execute the readable event first, and the writable
      * event later. This is useful as sometimes we may be able
      * to serve the reply of a query immediately after processing the
      * query.
@@ -300,29 +325,38 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
     if (call_write) {
         if (!callHandler(conn, conn->write_handler)) return;
     }
-    /* If we have to invert the call, fire the readable event now
+    /* 如果必须反转调用，请在可写事件之后立即启动可读事件
+     * If we have to invert the call, fire the readable event now
      * after the writable one. */
     if (invert && call_read) {
         if (!callHandler(conn, conn->read_handler)) return;
     }
 }
-
+/*
+ * 建立连接处理器
+ * accept:建立连接
+ */
 static void connSocketAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
-    char cip[NET_IP_STR_LEN];
+    char cip[NET_IP_STR_LEN];    // cport用于存储端口，cfd用于存储新建连接对应的文件描述符
     UNUSED(el);
     UNUSED(mask);
     UNUSED(privdata);
 
-    while(max--) {
+    while(max--) {// 可能存在多个客户端的建连请求，所以需要一直循环
+        // anetTcpAccept()底层先通过accept()创建连接，然后通过inet_ntop()
+        // 以及ntohs()等函数将ip和端口信息写入到cip和cport返回，
+        // 同时anetTcpAccept()函数的返回值就是新建连接对应的文件描述符
         cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
                 serverLog(LL_WARNING,
                     "Accepting client connection: %s", server.neterr);
-            return;
+            return;// 全部建连请求处理完毕，返回
         }
         serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
+        // 先通过connCreateAcceptedSocket()创建connection实例表示新建的网络
+        // 连接，然后使用acceptCommonHandler()进行初始化
         acceptCommonHandler(connCreateAcceptedSocket(cfd, NULL),0,cip);
     }
 }
@@ -338,7 +372,9 @@ static int connSocketAddr(connection *conn, char *ip, size_t ip_len, int *port, 
 static int connSocketListen(connListener *listener) {
     return listenToPort(listener);
 }
-
+/*
+ * 阻塞连接
+ */
 static int connSocketBlockingConnect(connection *conn, const char *addr, int port, long long timeout) {
     int fd = anetTcpNonBlockConnect(NULL,addr,port);
     if (fd == -1) {
@@ -346,7 +382,7 @@ static int connSocketBlockingConnect(connection *conn, const char *addr, int por
         conn->last_errno = errno;
         return C_ERR;
     }
-
+    //阻塞，等待事件。
     if ((aeWait(fd, AE_WRITABLE, timeout) & AE_WRITABLE) == 0) {
         conn->state = CONN_STATE_ERROR;
         conn->last_errno = ETIMEDOUT;
@@ -360,7 +396,6 @@ static int connSocketBlockingConnect(connection *conn, const char *addr, int por
 /* Connection-based versions of syncio.c functions.
  * NOTE: This should ideally be refactored out in favor of pure async work.
  */
-
 static ssize_t connSocketSyncWrite(connection *conn, char *ptr, ssize_t size, long long timeout) {
     return syncWrite(conn->fd, ptr, size, timeout);
 }
@@ -380,15 +415,19 @@ static const char *connSocketGetType(connection *conn) {
 }
 
 static ConnectionType CT_Socket = {
-    /* connection type */
+    /* 连接类型，默认tcp类型
+     * connection type
+     * */
     .get_type = connSocketGetType,
 
-    /* connection type initialize & finalize & configure */
+    /* 连接类型初始化、完成和配置
+     * connection type initialize & finalize & configure */
     .init = NULL,
     .cleanup = NULL,
     .configure = NULL,
 
-    /* ae & accept & listen & error & address handler */
+    /* ae&接受&侦听&错误&地址处理程序
+     * ae & accept & listen & error & address handler */
     .ae_handler = connSocketEventHandler,
     .accept_handler = connSocketAcceptHandler,
     .addr = connSocketAddr,
