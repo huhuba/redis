@@ -85,7 +85,8 @@ static connection *connCreateSocket(void) {
     return conn;
 }
 
-/* 创建已与接受的连接关联的新套接字类型连接。在调用connAccept（）并调用连接级接受处理程序之前，
+/* 创建socket并保持accept创建连接的文件描述符fd;
+ * 创建已与接受的连接关联的新套接字类型连接。在调用connAccept（）并调用连接级接受处理程序之前，
  * 套接字尚未准备好进行IO。调用方应使用connGetState（）
  * 并验证创建的连接是否处于错误状态（这对于套接字连接是不可能的，但对于其他协议是可能的）
  *

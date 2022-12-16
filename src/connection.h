@@ -84,6 +84,7 @@ typedef struct ConnectionType {
 
     /*ae&接受&侦听&错误&地址处理程序. ae & accept & listen & error & address handler */
     void (*ae_handler)(struct aeEventLoop *el, int fd, void *clientData, int mask);//注册的aeFileEvent的rfileProc、wfileProc指针都指向这个ae_handler函数
+
     aeFileProc *accept_handler;
     int (*addr)(connection *conn, char *ip, size_t ip_len, int *port, int remote);
     int (*listen)(connListener *listener);
@@ -105,7 +106,6 @@ typedef struct ConnectionType {
      * 可以一次向Socket写入多块连续不同的buffer空间，
      * 可以减少系统调用的次数
      * */
-
     int (*write)(struct connection *conn, const void *data, size_t data_len);
     int (*writev)(struct connection *conn, const struct iovec *iov, int iovcnt);
     int (*read)(struct connection *conn, void *buf, size_t buf_len);
@@ -113,7 +113,7 @@ typedef struct ConnectionType {
     int (*set_write_handler)(struct connection *conn, ConnectionCallbackFunc handler, int barrier);
     int (*set_read_handler)(struct connection *conn, ConnectionCallbackFunc handler);
     const char *(*get_last_error)(struct connection *conn);
-    // 下面是阻塞版本的读写函数以及connect函数(略)
+    // 下面是阻塞版本的读写函数以及connect函数
     ssize_t (*sync_write)(struct connection *conn, char *ptr, ssize_t size, long long timeout);
     ssize_t (*sync_read)(struct connection *conn, char *ptr, ssize_t size, long long timeout);
     ssize_t (*sync_readline)(struct connection *conn, char *ptr, ssize_t size, long long timeout);

@@ -4280,7 +4280,11 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     return processed;
 }
 
-/* Return 1 if we want to handle the client read later using threaded I/O.
+/* 推迟客户端读取
+ * 如果我们希望稍后使用线程IO处理客户端读取，则返回1。
+ * 这由事件循环的可读处理程序调用。
+ * 作为调用此函数的副作用，客户端被放入挂起的读取客户端中，并被标记为这样。
+ * Return 1 if we want to handle the client read later using threaded I/O.
  * This is called by the readable handler of the event loop.
  * As a side effect of calling this function the client is put in the
  * pending read clients and flagged as such. */

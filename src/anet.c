@@ -525,7 +525,7 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
 #ifdef HAVE_ACCEPT4
         fd = accept4(s, sa, len,  SOCK_NONBLOCK | SOCK_CLOEXEC);
 #else
-        fd = accept(s,sa,len);
+        fd = accept(s,sa,len);//建立连接
 #endif
     } while(fd == -1 && errno == EINTR);
     if (fd == -1) {
@@ -546,7 +546,8 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
     return fd;
 }
 
-/* Accept a connection and also make sure the socket is non-blocking, and CLOEXEC.
+/* 接受连接，并确保套接字是非阻塞的，并执行CLOEXEC。错误时返回新的套接字FD或-1。
+ * Accept a connection and also make sure the socket is non-blocking, and CLOEXEC.
  * returns the new socket FD, or -1 on error. */
 int anetTcpAccept(char *err, int serversock, char *ip, size_t ip_len, int *port) {
     int fd;
