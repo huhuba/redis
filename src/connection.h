@@ -125,15 +125,16 @@ struct connection {
 
 #define CONFIG_BINDADDR_MAX 16
 
-/* Setup a listener by a connection type */
+/* 按连接类型设置侦听器
+ * Setup a listener by a connection type */
 struct connListener {
-    int fd[CONFIG_BINDADDR_MAX];
-    int count;
+    int fd[CONFIG_BINDADDR_MAX];// 记录了每个监听地址对应的文件描述符
+    int count; // fd数组的个数
     char **bindaddr;
     int bindaddr_count;
     int port;
     ConnectionType *ct;
-    void *priv; /* used by connection type specified data */
+    void *priv; /*由连接类型指定的数据使用。 used by connection type specified data */
 };
 
 /* The connection module does not deal with listening and accepting sockets,

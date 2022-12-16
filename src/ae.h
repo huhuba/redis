@@ -84,7 +84,7 @@ typedef struct aeFileEvent {
 /* Time event structure */
 typedef struct aeTimeEvent {
     // 唯一标识，通过eventLoop->timeEventNextId字段计算得来
-    long long id; /* time event identifier. */
+    long long id; /*设置为-1，即为删除，不在触发 time event identifier. */
     // 时间事件触发的时间戳（微秒级别）
     monotime when;
     aeTimeProc *timeProc; // 处理该时间事件的函数

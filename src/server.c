@@ -2316,14 +2316,16 @@ void closeListener(connListener *sfd) {
     sfd->count = 0;
 }
 
-/* Create an event handler for accepting new connections in TCP or TLS domain sockets.
+/* 对所有的监听创建处理程序
+ * 创建用于在TCP或TLS域套接字中接受新连接的事件处理程序。这对所有套接字fds都是自动工作的
+ * Create an event handler for accepting new connections in TCP or TLS domain sockets.
  * This works atomically for all socket fds */
 int createSocketAcceptHandler(connListener *sfd, aeFileProc *accept_handler) {
     int j;
 
-    for (j = 0; j < sfd->count; j++) {
+    for (j = 0; j < sfd->count; j++) { // 监听每个文件描述符上的可读事件
         if (aeCreateFileEvent(server.el, sfd->fd[j], AE_READABLE, accept_handler,sfd) == AE_ERR) {
-            /* Rollback */
+            /* 如果创建事件出错，则删除对应事件。Rollback */
             for (j = j-1; j >= 0; j--) aeDeleteFileEvent(server.el, sfd->fd[j], AE_READABLE);
             return C_ERR;
         }
@@ -2355,21 +2357,22 @@ int listenToPort(connListener *sfd) {
     int port = sfd->port;
     char **bindaddr = sfd->bindaddr;
 
-    /* If we have no bind address, we don't listen on a TCP socket */
-    if (sfd->bindaddr_count == 0) return C_OK;
+    /* 如果我们没有绑定地址，我们就不会监听TCP套接字
+     * If we have no bind address, we don't listen on a TCP socket */
+    if (sfd->bindaddr_count == 0) return C_OK;// 边界检查
 
     for (j = 0; j < sfd->bindaddr_count; j++) {
         char* addr = bindaddr[j];
         int optional = *addr == '-';
         if (optional) addr++;
-        if (strchr(addr,':')) {
+        if (strchr(addr,':')) {// 对IPv6地址的处理，绑定
             /* Bind IPv6 address. */
             sfd->fd[sfd->count] = anetTcp6Server(server.neterr,port,addr,server.tcp_backlog);
-        } else {
+        } else {// 对IPv4地址的处理，绑定
             /* Bind IPv4 address. */
             sfd->fd[sfd->count] = anetTcpServer(server.neterr,port,addr,server.tcp_backlog);
         }
-        if (sfd->fd[sfd->count] == ANET_ERR) {
+        if (sfd->fd[sfd->count] == ANET_ERR) {//处理异常
             int net_errno = errno;
             serverLog(LL_WARNING,
                 "Warning: Could not create server TCP listening socket %s:%d: %s",
@@ -2386,6 +2389,7 @@ int listenToPort(connListener *sfd) {
             return C_ERR;
         }
         if (server.socket_mark_id > 0) anetSetSockMarkId(NULL, sfd->fd[sfd->count], server.socket_mark_id);
+        // // 设置成非阻塞
         anetNonBlock(NULL,sfd->fd[sfd->count]);
         anetCloexec(sfd->fd[sfd->count]);
         sfd->count++;
@@ -2473,7 +2477,8 @@ void initServer(void) {
             server.syslog_facility);
     }
 
-    /* Initialization after setting defaults from the config system. */
+    /* 从配置系统设置默认值后进行初始化。
+     * Initialization after setting defaults from the config system. */
     server.aof_state = server.aof_enabled ? AOF_ON : AOF_OFF;
     server.hz = server.config_hz;
     server.pid = getpid();
@@ -2491,7 +2496,7 @@ void initServer(void) {
     server.clients_pending_read = listCreate();
     server.clients_timeout_table = raxNew();
     server.replication_allowed = 1;
-    server.slaveseldb = -1; /* Force to emit the first SELECT command. */
+    server.slaveseldb = -1; /* 强制发出第一个SELECT命令。Force to emit the first SELECT command. */
     server.unblocked_clients = listCreate();
     server.ready_keys = listCreate();
     server.tracking_pending_keys = listCreate();
@@ -2512,7 +2517,7 @@ void initServer(void) {
     server.client_mem_usage_buckets = NULL;
     resetReplicationBuffer();
 
-    /* Make sure the locale is set on startup based on the config file. */
+    /* 确保在启动时根据配置文件设置了区域设置。Make sure the locale is set on startup based on the config file. */
     if (setlocale(LC_COLLATE,server.locale_collate) == NULL) {
         serverLog(LL_WARNING, "Failed to configure LOCALE for invalid locale name.");
         exit(1);
@@ -2656,7 +2661,8 @@ void initServer(void) {
 }
 
 void initListeners() {
-    /* Setup listeners from server config for TCP/TLS/Unix */
+    /* 从TCP/TLS/Unix的服务器配置设置侦听器
+     * Setup listeners from server config for TCP/TLS/Unix */
     int conn_index;
     connListener *listener;
     if (server.port != 0) {
@@ -2714,7 +2720,7 @@ void initListeners() {
             serverLog(LL_WARNING, "Failed listening on port %u (%s), aborting.", listener->port, listener->ct->get_type(NULL));
             exit(1);
         }
-
+        //
         if (createSocketAcceptHandler(listener, connAcceptHandler(listener->ct)) != C_OK)
             serverPanic("Unrecoverable error creating %s listener accept handler.", listener->ct->get_type(NULL));
 
@@ -6320,7 +6326,8 @@ connListener *listenerByType(const char *typename) {
     return &server.listeners[conn_index];
 }
 
-/* Close original listener, re-create a new listener from the updated bind address & port */
+/* 关闭原始侦听器，从更新的绑定地址和端口重新创建新侦听器
+ * Close original listener, re-create a new listener from the updated bind address & port */
 int changeListener(connListener *listener) {
     /* Close old servers */
     closeListener(listener);
@@ -7129,7 +7136,7 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING, "Configuration loaded");
     }
 
-    initServer();
+    initServer();//初始化服务
     if (background || server.pidfile) createPidFile();
     if (server.set_proc_title) redisSetProcTitle(NULL);
     redisAsciiArt();
@@ -7142,9 +7149,9 @@ int main(int argc, char **argv) {
         moduleLoadFromQueue();
     }
     ACLLoadUsersAtStartup();
-    initListeners();
+    initListeners();//初始化监听器
     if (server.cluster_enabled) {
-        clusterInitListeners();
+        clusterInitListeners();//集群模式初始化监听器
     }
     InitServerLast();
 
@@ -7220,7 +7227,7 @@ int main(int argc, char **argv) {
     redisSetCpuAffinity(server.server_cpulist);
     setOOMScoreAdj(-1);
 
-    aeMain(server.el);
+    aeMain(server.el);//调用aeMain的主函数
     aeDeleteEventLoop(server.el);
     return 0;
 }
