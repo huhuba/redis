@@ -337,7 +337,7 @@ static void connSocketEventHandler(struct aeEventLoop *el, int fd, void *clientD
  * 建立连接处理器
  * accept:建立连接
  */
-static void connSocketAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
+    static void connSocketAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
     char cip[NET_IP_STR_LEN];    // cport用于存储端口，cfd用于存储新建连接对应的文件描述符
     UNUSED(el);

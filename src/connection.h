@@ -73,6 +73,7 @@ typedef enum {
 
 typedef void (*ConnectionCallbackFunc)(struct connection *conn);
 
+/* ConnectionType类型的实例  CT_Socket */
 typedef struct ConnectionType {
     /* connection type */
     const char *(*get_type)(struct connection *conn);
@@ -82,10 +83,12 @@ typedef struct ConnectionType {
     void (*cleanup)(void);
     int (*configure)(void *priv, int reconfigure);
 
-    /*ae&接受&侦听&错误&地址处理程序. ae & accept & listen & error & address handler */
+    /*ae&接受&侦听&错误&地址处理程序.
+     * 实际指向了  connSocketEventHandler函数
+     * ae & accept & listen & error & address handler */
     void (*ae_handler)(struct aeEventLoop *el, int fd, void *clientData, int mask);//注册的aeFileEvent的rfileProc、wfileProc指针都指向这个ae_handler函数
 
-    aeFileProc *accept_handler;
+    aeFileProc *accept_handler;//accept_handler处理器，建立链接.实际指向了 connSocketAcceptHandler处理器
     int (*addr)(connection *conn, char *ip, size_t ip_len, int *port, int remote);
     int (*listen)(connListener *listener);
 
@@ -391,7 +394,8 @@ static inline void connSetPrivateData(connection *conn, void *data) {
     conn->private_data = data;
 }
 
-/* Get the associated private data pointer */
+/* 获取关联的私有数据指针，即返回Clients
+ * Get the associated private data pointer */
 static inline void *connGetPrivateData(connection *conn) {
     return conn->private_data;
 }

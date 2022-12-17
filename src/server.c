@@ -1597,7 +1597,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     /* Handle precise timeouts of blocked clients. */
     handleBlockedClientsTimeout();
 
-    /* We should handle pending reads clients ASAP after event loop. */
+    /* 我们应该在事件循环后尽快处理挂起的读取客户端。
+     * We should handle pending reads clients ASAP after event loop. */
     handleClientsWithPendingReadsUsingThreads();
 
     /* Handle pending data(typical TLS). (must be done before flushAppendOnlyFile) */
@@ -1678,7 +1679,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     if (server.aof_state == AOF_ON || server.aof_state == AOF_WAIT_REWRITE)
         flushAppendOnlyFile(0);
 
-    /* Handle writes with pending output buffers. */
+    /* 处理具有挂起输出缓冲区的写入
+     * Handle writes with pending output buffers. */
     handleClientsWithPendingWritesUsingThreads();
 
     /* Close clients that need to be closed asynchronous */
@@ -2733,7 +2735,12 @@ void initListeners() {
     }
 }
 
-/* Some steps in server initialization need to be done last (after modules
+/* 服务器初始化中的某些步骤需要最后完成（在加载模块之后）。
+ * 具体来说，由于ld中的种族错误而创建线程。
+ * 因此，线程本地存储初始化与dlopen调用冲突。
+ * 请参阅：https://sourceware.orgbugzillashow_bug.cgi？id=19329
+ *
+ * Some steps in server initialization need to be done last (after modules
  * are loaded).
  * Specifically, creation of threads due to a race bug in ld.so, in which
  * Thread Local Storage initialization collides with dlopen call.

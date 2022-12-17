@@ -1562,9 +1562,12 @@ struct redisServer {
     dict *migrate_cached_sockets;/* MIGRATE cached sockets */
     redisAtomic uint64_t next_client_id; /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
-    int io_threads_num;         /* Number of IO threads to use. */
-    int io_threads_do_reads;    /* Read and parse from IO threads? */
-    int io_threads_active;      /* Is IO threads currently active? */
+    // 创建多少个IO线程，由io-threads配置指定，默认值为1，即表示不开启
+    // 多线程模式，只使用一个主线程来处理所有IO，取值范围在1到128之间
+    int io_threads_num;         /* 要使用的IO线程数。Number of IO threads to use. */
+    int io_threads_do_reads;    /* 是否使用IO线程处理可读事件。 Read and parse from IO threads? */
+    int io_threads_active;      /* 是否有IO线程可用. Is IO threads currently active? */
+
     long long events_processed_while_blocked; /* processEventsWhileBlocked() */
     int enable_protected_configs;    /* Enable the modification of protected configs, see PROTECTED_ACTION_ALLOWED_* */
     int enable_debug_cmd;            /* Enable DEBUG commands, see PROTECTED_ACTION_ALLOWED_* */
