@@ -307,7 +307,8 @@ int prepareClientToWrite(client *c) {
 
     if (!c->conn) return C_ERR; /* Fake client for AOF loading. */
 
-    /* Schedule the client to write the output buffers to the socket, unless
+    /*
+     * Schedule the client to write the output buffers to the socket, unless
      * it should already be setup to do so (it has already pending data).
      *
      * If CLIENT_PENDING_READ is set, we're in an IO thread and should
@@ -315,6 +316,7 @@ int prepareClientToWrite(client *c) {
      * done by handleClientsWithPendingReadsUsingThreads() upon return.
      */
     if (!clientHasPendingReplies(c) && io_threads_op == IO_THREADS_OP_IDLE)
+        //clientHasPendingReplies()是检查buf和reply是否已经数据，如果有，就返回true
         putClientInPendingWriteQueue(c);
 
     /* Authorize the caller to queue in the output buffer of this client. */
@@ -348,7 +350,8 @@ size_t _addReplyToBuffer(client *c, const char *s, size_t len) {
     return reply_len;
 }
 
-/* Adds the reply to the reply linked list.
+/* 将答复添加到答复链接列表。注意：此函数的某些编辑需要转发到AddReplyFromClient。
+ * Adds the reply to the reply linked list.
  * Note: some edits to this function need to be relayed to AddReplyFromClient. */
 void _addReplyProtoToList(client *c, const char *s, size_t len) {
     listNode *ln = listLast(c->reply);
@@ -385,7 +388,7 @@ void _addReplyProtoToList(client *c, const char *s, size_t len) {
         closeClientOnOutputBufferLimitReached(c, 1);
     }
 }
-
+/*添加回复到buf缓冲区或reply列表 */
 void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
     if (c->flags & CLIENT_CLOSE_AFTER_REPLY) return;
 
@@ -400,8 +403,8 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
         return;
     }
 
-    size_t reply_len = _addReplyToBuffer(c,s,len);
-    if (len > reply_len) _addReplyProtoToList(c,s+reply_len,len-reply_len);
+    size_t reply_len = _addReplyToBuffer(c,s,len);//_addReplyToBuffer()函数向buf缓冲区写入数据
+    if (len > reply_len) _addReplyProtoToList(c,s+reply_len,len-reply_len);//如果buf缓冲区填满了，会通过_addReplyProtoToList()函数向reply链表写入
 }
 
 /* -----------------------------------------------------------------------------
@@ -409,7 +412,8 @@ void _addReplyToBufferOrList(client *c, const char *s, size_t len) {
  * The following functions are the ones that commands implementations will call.
  * -------------------------------------------------------------------------- */
 
-/* Add the object 'obj' string representation to the client output buffer. */
+/* 将字符串对象“obj”添加到客户端输出缓冲区
+ * Add the object 'obj' string representation to the client output buffer. */
 void addReply(client *c, robj *obj) {
     if (prepareClientToWrite(c) != C_OK) return;
 
@@ -1025,14 +1029,16 @@ void addReplyNullArray(client *c) {
     }
 }
 
-/* Create the length prefix of a bulk reply, example: $2234 */
+/* 创建批量答复的长度前缀，例如：$2234
+ * Create the length prefix of a bulk reply, example: $2234 */
 void addReplyBulkLen(client *c, robj *obj) {
-    size_t len = stringObjectLen(obj);
+    size_t len = stringObjectLen(obj);// 计算字符串长度
 
-    addReplyLongLongWithPrefix(c,len,'$');
+    addReplyLongLongWithPrefix(c,len,'$');// 添加$前缀以及\r\n结尾
 }
 
-/* Add a Redis Object as a bulk reply */
+/* 添加Redis对象作为批量回复
+ * Add a Redis Object as a bulk reply */
 void addReplyBulk(client *c, robj *obj) {
     addReplyBulkLen(c,obj);
     addReply(c,obj);
@@ -1819,7 +1825,7 @@ static int _writevToClient(client *c, ssize_t *nwritten) {
     listRewind(c->reply, &iter);
     while ((next = listNext(&iter)) && iovcnt < IOV_MAX && iov_bytes_len < NET_MAX_WRITES_PER_EVENT) {
         o = listNodeValue(next);
-        if (o->used == 0) { /* empty node, just release it and skip. */
+        if (o->used == 0) { /* 空节点，只需释放它并跳过。empty node, just release it and skip. */
             c->reply_bytes -= o->size;
             listDelNode(c->reply, next);
             offset = 0;
@@ -1832,16 +1838,18 @@ static int _writevToClient(client *c, ssize_t *nwritten) {
         offset = 0;
     }
     if (iovcnt == 0) return C_OK;
-    *nwritten = connWritev(c->conn, iov, iovcnt);
+    *nwritten = connWritev(c->conn, iov, iovcnt);//将值写入客户端
     if (*nwritten <= 0) return C_ERR;
 
-    /* Locate the new node which has leftover data and
+    /* 找到具有剩余数据的新节点并释放其前面的所有节点
+     * Locate the new node which has leftover data and
      * release all nodes in front of it. */
     ssize_t remaining = *nwritten;
-    if (c->bufpos > 0) { /* deal with static reply buffer first. */
+    if (c->bufpos > 0) { /*首先处理静态应答缓冲区。 deal with static reply buffer first. */
         int buf_len = c->bufpos - c->sentlen;
         c->sentlen += remaining;
-        /* If the buffer was sent, set bufpos to zero to continue with
+        /* 如果缓冲区已发送，请将bufpos设置为零以继续执行其余的回复。
+         * If the buffer was sent, set bufpos to zero to continue with
          * the remainder of the reply. */
         if (remaining >= buf_len) {
             c->bufpos = 0;
@@ -1866,7 +1874,10 @@ static int _writevToClient(client *c, ssize_t *nwritten) {
     return C_OK;
 }
 
-/* This function does actual writing output buffers to different types of
+/* 此函数实际将输出缓冲区写入不同类型的客户端，由writeToClient调用。
+ * 如果写入成功，则返回C_OK，否则返回C_ERR，并且“nwriten”是一个输出参数，表示服务器向客户端写入的字节数。
+ *
+ * This function does actual writing output buffers to different types of
  * clients, it is called by writeToClient.
  * If we write successfully, it returns C_OK, otherwise, C_ERR is returned,
  * and 'nwritten' is an output parameter, it means how many bytes server write
@@ -1898,7 +1909,8 @@ int _writeToClient(client *c, ssize_t *nwritten) {
         return C_OK;
     }
 
-    /* When the reply list is not empty, it's better to use writev to save us some
+    /* 当回复列表不为空时，最好使用writev为我们保存一些系统调用和TCP数据包
+     * When the reply list is not empty, it's better to use writev to save us some
      * system calls and TCP packets. */
     if (listLength(c->reply) > 0) {
         int ret = _writevToClient(c, nwritten);
@@ -1924,7 +1936,13 @@ int _writeToClient(client *c, ssize_t *nwritten) {
     return C_OK;
 }
 
-/* Write data in output buffers to client. Return C_OK if the client
+/* 将输出缓冲区中的数据写入客户端。如果客户端在调用后仍然有效，则返回C_OK；如果由于某些错误而被释放，则返回返回C_ERR。
+ * 如果设置了handler_installed，它将尝试清除写入事件。
+ *
+ * 该函数由线程调用，但始终将handler_installed设置为0。
+ * 因此，当handler_install设置为0时，该函数必须是线程安全的。
+ *
+ * Write data in output buffers to client. Return C_OK if the client
  * is still valid after the call, C_ERR if it was freed because of some
  * error.  If handler_installed is set, it will attempt to clear the
  * write event.
@@ -1938,8 +1956,8 @@ int writeToClient(client *c, int handler_installed) {
 
     ssize_t nwritten = 0, totwritten = 0;
 
-    while(clientHasPendingReplies(c)) {
-        int ret = _writeToClient(c, &nwritten);
+    while(clientHasPendingReplies(c)) {// 当前client是否有要返回的数据
+        int ret = _writeToClient(c, &nwritten);// 向底层Socket连接写入数据
         if (ret == C_ERR) break;
         totwritten += nwritten;
         /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
@@ -1957,7 +1975,7 @@ int writeToClient(client *c, int handler_installed) {
         if (totwritten > NET_MAX_WRITES_PER_EVENT &&
             (server.maxmemory == 0 ||
              zmalloc_used_memory() < server.maxmemory) &&
-            !(c->flags & CLIENT_SLAVE)) break;
+            !(c->flags & CLIENT_SLAVE)) break;// 一次最多返回64k的数据，超过64k直接结束
     }
 
     if (getClientType(c) == CLIENT_TYPE_SLAVE) {
@@ -1981,24 +1999,31 @@ int writeToClient(client *c, int handler_installed) {
          * We just rely on data / pings received for timeout detection. */
         if (!(c->flags & CLIENT_MASTER)) c->lastinteraction = server.unixtime;
     }
-    if (!clientHasPendingReplies(c)) {
+    if (!clientHasPendingReplies(c)) {//已经没有要回复的数据时。
+        // 当前client所有要返回的数据，都已经写入底层的Socket连接之后，会走入这个分支
         c->sentlen = 0;
-        /* Note that writeToClient() is called in a threaded way, but
+        /* 请注意，writeToClient（）是以线程方式调用的，但aeDeleteFileEvent（）不是线程安全的：
+         * 然而，writeTo客户端（）总是在handler_installed设置为0的情况下从线程调用，
+         * 所以我们可以正常工作。
+         * Note that writeToClient() is called in a threaded way, but
          * aeDeleteFileEvent() is not thread safe: however writeToClient()
          * is always called with handler_installed set to 0 from threads
          * so we are fine. */
-        if (handler_installed) {
+        if (handler_installed) {// 该参数为1的时候，才会清空
             serverAssert(io_threads_op == IO_THREADS_OP_IDLE);
             connSetWriteHandler(c->conn, NULL);
         }
 
-        /* Close connection after entire reply has been sent. */
+        /* 发送完整答复后关闭连接
+         * Close connection after entire reply has been sent. */
         if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
             freeClientAsync(c);
             return C_ERR;
         }
     }
-    /* Update client's memory usage after writing.
+    /* 写入后更新客户端的内存使用情况。因为这不是线程安全的，所以我们有条件地(io线程空闲时)这样做。
+     * 在线程写入的情况下，这是在handleClientsWithPendingWritesUsingThreads（）中完成的
+     * Update client's memory usage after writing.
      * Since this isn't thread safe we do this conditionally. In case of threaded writes this is done in
      * handleClientsWithPendingWritesUsingThreads(). */
     if (io_threads_op == IO_THREADS_OP_IDLE)
@@ -2006,7 +2031,8 @@ int writeToClient(client *c, int handler_installed) {
     return C_OK;
 }
 
-/* Write event handler. Just send data to the client. */
+/* 写入事件处理程序。只需向客户端发送数据
+ * Write event handler. Just send data to the client. */
 void sendReplyToClient(connection *conn) {
     client *c = connGetPrivateData(conn);
     writeToClient(c,1);
@@ -2243,14 +2269,17 @@ int processMultibulkBuffer(client *c) {
     char *newline = NULL;
     int ok;
     long long ll;
-
+    // multibulklen字段用来记录此次multibulk请求中剩余要读取的参数个数，
+    // 此时是0，表示还未初始化，我们要读取第一行数据
     if (c->multibulklen == 0) {
-        /* The client should have been reset */
+        /* 客户端应该已重置
+         * The client should have been reset */
         serverAssertWithInfo(c,NULL,c->argc == 0);
 
-        /* Multi bulk length cannot be read without a \r\n */
+        /* 在querybuf缓冲区中搜索'\r'这个分隔字符
+         * Multi bulk length cannot be read without a \r\n */
         newline = strchr(c->querybuf+c->qb_pos,'\r');
-        if (newline == NULL) {
+        if (newline == NULL) {//异常处理
             if (sdslen(c->querybuf)-c->qb_pos > PROTO_INLINE_MAX_SIZE) {
                 addReplyError(c,"Protocol error: too big mbulk count string");
                 setProtocolError("too big mbulk count string",c);
@@ -2262,9 +2291,11 @@ int processMultibulkBuffer(client *c) {
         if (newline-(c->querybuf+c->qb_pos) > (ssize_t)(sdslen(c->querybuf)-c->qb_pos-2))
             return C_ERR;
 
-        /* We know for sure there is a whole line since newline != NULL,
+        /* 我们可以肯定，自换行以来，还有整整一行！=NULL，所以继续查找多批量长度。
+         * We know for sure there is a whole line since newline != NULL,
          * so go ahead and find out the multi bulk length. */
         serverAssertWithInfo(c,NULL,c->querybuf[c->qb_pos] == '*');
+        // 将第一行数据转换成整数，并记录到multibulklen这个字段中
         ok = string2ll(c->querybuf+1+c->qb_pos,newline-(c->querybuf+1+c->qb_pos),&ll);
         if (!ok || ll > INT_MAX) {
             addReplyError(c,"Protocol error: invalid multibulk length");
@@ -2276,7 +2307,7 @@ int processMultibulkBuffer(client *c) {
             return C_ERR;
         }
 
-        c->qb_pos = (newline-c->querybuf)+2;
+        c->qb_pos = (newline-c->querybuf)+2;// 后移qb_pos值
 
         if (ll <= 0) return C_OK;
 
@@ -2284,15 +2315,18 @@ int processMultibulkBuffer(client *c) {
 
         /* Setup argv array on client structure */
         if (c->argv) zfree(c->argv);
+        // argv字段用来记录解析后的参数
         c->argv_len = min(c->multibulklen, 1024);
         c->argv = zmalloc(sizeof(robj*)*c->argv_len);
-        c->argv_len_sum = 0;
+        c->argv_len_sum = 0;// argv_len_sum字段用来记录请求参数解析后的总长度
     }
 
     serverAssertWithInfo(c,NULL,c->multibulklen > 0);
     while(c->multibulklen) {
         /* Read bulk length if unknown */
+        // bulklen字段记录当前bulk的长度，为-1时表示未初始化，需要我们读取当前bulk的第一行进行初始化
         if (c->bulklen == -1) {
+            // 从qb_pos位置开始，查找querybuf缓冲区中的第一个'\r'分隔符。
             newline = strchr(c->querybuf+c->qb_pos,'\r');
             if (newline == NULL) {
                 if (sdslen(c->querybuf)-c->qb_pos > PROTO_INLINE_MAX_SIZE) {
@@ -2304,10 +2338,11 @@ int processMultibulkBuffer(client *c) {
                 break;
             }
 
-            /* Buffer should also contain \n */
+            /* 缓冲区还应包含 \n
+             * Buffer should also contain \n */
             if (newline-(c->querybuf+c->qb_pos) > (ssize_t)(sdslen(c->querybuf)-c->qb_pos-2))
                 break;
-
+            // 如果不是以"$"开头，直接抛异常。
             if (c->querybuf[c->qb_pos] != '$') {
                 addReplyErrorFormat(c,
                     "Protocol error: expected '$', got '%c'",
@@ -2315,7 +2350,7 @@ int processMultibulkBuffer(client *c) {
                 setProtocolError("expected $ but got something else",c);
                 return C_ERR;
             }
-
+            //读取这一行中的数字，也就是该元素的字符串的长度
             ok = string2ll(c->querybuf+c->qb_pos+1,newline-(c->querybuf+c->qb_pos+1),&ll);
             if (!ok || ll < 0 ||
                 (!(c->flags & CLIENT_MASTER) && ll > server.proto_max_bulk_len)) {
@@ -2354,18 +2389,23 @@ int processMultibulkBuffer(client *c) {
             c->bulklen = ll;
         }
 
-        /* Read bulk argument */
+        /* 下面开始读取字符串的具体内容
+         * Read bulk argument */
         if (sdslen(c->querybuf)-c->qb_pos < (size_t)(c->bulklen+2)) {
-            /* Not enough data (+2 == trailing \r\n) */
+            /* querybuf缓冲区中数据不足以构造当前元素，
+             * 则停止读取，等待连接下次可读事件
+             * Not enough data (+2 == trailing \r\n) */
             break;
         } else {
-            /* Check if we have space in argv, grow if needed */
+            /*
+             * Check if we have space in argv, grow if needed */
             if (c->argc >= c->argv_len) {
                 c->argv_len = min(c->argv_len < INT_MAX/2 ? c->argv_len*2 : INT_MAX, c->argc+c->multibulklen);
                 c->argv = zrealloc(c->argv, sizeof(robj*)*c->argv_len);
             }
 
-            /* Optimization: if a non-master client's buffer contains JUST our bulk element
+            /* 优化：如果非主客户机的缓冲区仅包含我们的批量元素，而不是通过复制sds创建新对象，我们只使用当前的sds字符串。
+             * Optimization: if a non-master client's buffer contains JUST our bulk element
              * instead of creating a new object by *copying* the sds we
              * just use the current sds string. */
             if (!(c->flags & CLIENT_MASTER) &&
@@ -2381,17 +2421,20 @@ int processMultibulkBuffer(client *c) {
                 c->querybuf = sdsnewlen(SDS_NOINIT,c->bulklen+2);
                 sdsclear(c->querybuf);
             } else {
+                /* 解析字符串的具体内容，得到对应的robj对象，并记录到argv数组中。
+                 * 这里使用的argc字段用来记录请求中元素个数 */
                 c->argv[c->argc++] =
                     createStringObject(c->querybuf+c->qb_pos,c->bulklen);
-                c->argv_len_sum += c->bulklen;
-                c->qb_pos += c->bulklen+2;
+                c->argv_len_sum += c->bulklen;// 参数长度增加
+                c->qb_pos += c->bulklen+2;// 后移qb_pos
             }
-            c->bulklen = -1;
-            c->multibulklen--;
+            c->bulklen = -1;// 当前字符串读取完毕，重置bulklen
+            c->multibulklen--; // 读完一个元素，multibulklen值递减1
         }
     }
 
-    /* We're done when c->multibulk == 0 */
+    /* 当c->multibulk==0时，我们就完成了
+     * We're done when c->multibulk == 0 */
     if (c->multibulklen == 0) return C_OK;
 
     /* Still not ready to process the command */
@@ -2436,7 +2479,12 @@ void commandProcessed(client *c) {
     }
 }
 
-/* This function calls processCommand(), but also performs a few sub tasks
+/*
+ * 此函数调用processCommand（），但也为客户端执行一些在该上下文中有用的子任务：
+ * 1.将当前客户端设置为客户端“c”。
+ * 2.如果命令已处理，则调用commandProcessed（）。
+ * 如果客户端因处理命令的副作用而被释放，则函数返回C_ERR，否则返回C_OK
+ * This function calls processCommand(), but also performs a few sub tasks
  * for the client that are useful in that context:
  *
  * 1. It sets the current client to the client 'c'.
@@ -2446,17 +2494,21 @@ void commandProcessed(client *c) {
  * of processing the command, otherwise C_OK is returned. */
 int processCommandAndResetClient(client *c) {
     int deadclient = 0;
-    client *old_client = server.current_client;
-    server.current_client = c;
+    client *old_client = server.current_client;//保存老的客户端
+    server.current_client = c;//持有传入的客户端
     if (processCommand(c) == C_OK) {
         commandProcessed(c);
-        /* Update the client's memory to include output buffer growth following the
+        /* 更新客户端的内存，以包括处理后的命令后的输出缓冲区增长。
+         * Update the client's memory to include output buffer growth following the
          * processed command. */
         updateClientMemUsageAndBucket(c);
     }
 
     if (server.current_client == NULL) deadclient = 1;
     /*
+     * 恢复旧客户端，这是必需的，因为当脚本超时时，我们将从processEventsWhileBlocked进入此代码。
+     * 这将导致设置server.current_client。
+     * 如果没有恢复，我们将向调用者返回1，这将错误地指示客户端已死亡，并将停止从其缓冲区读取数据。
      * Restore the old client, this is needed because when a script
      * times out, we will get into this code from processEventsWhileBlocked.
      * Which will cause to set the server.current_client. If not restored
@@ -2464,25 +2516,31 @@ int processCommandAndResetClient(client *c) {
      * is dead and will stop reading from its buffer.
      */
     server.current_client = old_client;
-    /* performEvictions may flush slave output buffers. This may
+    /* performEvictions可能会刷新从属输出缓冲区。
+     * 这可能会导致释放一个可能是活动客户端的从属服务器。
+     * performEvictions may flush slave output buffers. This may
      * result in a slave, that may be the active client, to be
      * freed. */
     return deadclient ? C_ERR : C_OK;
 }
 
 
-/* This function will execute any fully parsed commands pending on
+/* 此函数将执行客户端上挂起的任何完全解析的命令。
+ * 如果客户端在执行命令后不再有效，则返回C_ERR；对于所有其他情况，返回C_OK。
+ * This function will execute any fully parsed commands pending on
  * the client. Returns C_ERR if the client is no longer valid after executing
  * the command, and C_OK for all other cases. */
 int processPendingCommandAndInputBuffer(client *c) {
-    if (c->flags & CLIENT_PENDING_COMMAND) {
-        c->flags &= ~CLIENT_PENDING_COMMAND;
+    if (c->flags & CLIENT_PENDING_COMMAND) {//如果客户端上的命令已经解析完毕，则进行执行
+        c->flags &= ~CLIENT_PENDING_COMMAND;//设置客户端的flags
         if (processCommandAndResetClient(c) == C_ERR) {
             return C_ERR;
         }
     }
 
-    /* Now process client if it has more data in it's buffer.
+    /* 如果它的缓冲区中有更多数据,现在处理客户端。
+     * 注意：当主客户端进入此函数时，它总是可以满足此条件，因为它的querbuf包含未应用的数据。
+     * Now process client if it has more data in it's buffer.
      *
      * Note: when a master client steps into this function,
      * it can always satisfy this condition, because its querbuf
@@ -2503,9 +2561,11 @@ int processPendingCommandAndInputBuffer(client *c) {
  * pending query buffer, already representing a full command, to process.
  * return C_ERR in case the client was freed during the processing */
 int processInputBuffer(client *c) {
-    /* Keep processing while there is something in the input buffer */
-    while(c->qb_pos < sdslen(c->querybuf)) {
-        /* Immediately abort if the client is in the middle of something. */
+    /* 当输入缓冲区中有内容时继续处理
+     * Keep processing while there is something in the input buffer */
+    while(c->qb_pos < sdslen(c->querybuf)) {    // qb_pos字段用来记录querybuf的读取位置
+        /* 如果客户端正在执行某些操作，请立即中止
+         * Immediately abort if the client is in the middle of something. */
         if (c->flags & CLIENT_BLOCKED) break;
 
         /* Don't process more buffers from clients that have already pending
@@ -2526,37 +2586,44 @@ int processInputBuffer(client *c) {
         if (c->flags & (CLIENT_CLOSE_AFTER_REPLY|CLIENT_CLOSE_ASAP)) break;
 
         /* Determine request type when unknown. */
-        if (!c->reqtype) {
+        if (!c->reqtype) {// reqtype字段指定了该客户端发出的请求协议类型
             if (c->querybuf[c->qb_pos] == '*') {
                 c->reqtype = PROTO_REQ_MULTIBULK;
             } else {
                 c->reqtype = PROTO_REQ_INLINE;
             }
         }
-
+        // 不同协议类型走不同的命令解析函数
         if (c->reqtype == PROTO_REQ_INLINE) {
             if (processInlineBuffer(c) != C_OK) break;
         } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
             if (processMultibulkBuffer(c) != C_OK) break;
-        } else {
+        } else {// 未知请求类型，输出日志并结束进程
             serverPanic("Unknown request type");
         }
 
-        /* Multibulk processing could see a <= 0 length. */
+        /* 多批量处理可以看到长度<=0
+         * Multibulk processing could see a <= 0 length. */
         if (c->argc == 0) {
             resetClient(c);
         } else {
-            /* If we are in the context of an I/O thread, we can't really
+            /* 在IO线程读取请求的时候，io_threads_op这个全局变量的值是IO_THREADS_OP_READ，
+               所以正常解析请求的时候，一定会走进下面的分支。里面会给client添加
+               CLIENT_PENDING_COMMAND标志位，表示该client中有一条待执行的命令，
+               同时，里面的break会结束当前这条命令的解析过程
+             * 如果我们在IO线程的上下文中，我们就不能在这里真正执行命令。我们所能做的就是将客户端标记为需要处理命令的客户端。
+             * If we are in the context of an I/O thread, we can't really
              * execute the command here. All we can do is to flag the client
              * as one that needs to process the command. */
             if (io_threads_op != IO_THREADS_OP_IDLE) {
                 serverAssert(io_threads_op == IO_THREADS_OP_READ);
-                c->flags |= CLIENT_PENDING_COMMAND;
+                c->flags |= CLIENT_PENDING_COMMAND;//给 client 添加 CLIENT_PENDING_COMMAND 标志位.明这个 client 实例里面已经有解析好的命令，等待主线程进行处理.
                 break;
             }
 
-            /* We are finally ready to execute the command. */
-            if (processCommandAndResetClient(c) == C_ERR) {
+            /* 我们终于可以执行命令了。
+             * We are finally ready to execute the command. */
+            if (processCommandAndResetClient(c) == C_ERR) {// 因为上面CLIENT_PENDING_READ标记为的处理，IO线程中不会执行到这里
                 /* If the client is no longer valid, we avoid exiting this
                  * loop and trimming the client buffer later. So we return
                  * ASAP in that case. */
@@ -2583,10 +2650,10 @@ int processInputBuffer(client *c) {
             c->qb_pos -= c->repl_applied;
             c->repl_applied = 0;
         }
-    } else if (c->qb_pos) {
+    } else if (c->qb_pos) {// 将已经解析的命令从querybuf缓冲区中删除
         /* Trim to pos */
         sdsrange(c->querybuf,c->qb_pos,-1);
-        c->qb_pos = 0;
+        c->qb_pos = 0;// 重置qb_pos
     }
 
     /* Update client memory usage after processing the query buffer, this is
@@ -4239,6 +4306,7 @@ int stopThreadedIOIfNeeded(void) {
  * it can safely perform post-processing and return to normal synchronous
  * work. */
 int handleClientsWithPendingWritesUsingThreads(void) {
+    // 步骤1、server.clients_pending_write 队列长度，要是这个队列是空，就没必要执行后续写回响应的流程了
     int processed = listLength(server.clients_pending_write);
     if (processed == 0) return 0; /* Return ASAP if there are no clients. */
 
@@ -4247,6 +4315,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
      * If I/O threads are disabled or we have few clients to serve, don't
      * use I/O threads, but the boring synchronous code. */
     if (server.io_threads_num == 1 || stopThreadedIOIfNeeded()) {
+        // 步骤2、检查server.io_threads_num以及server.io_threads_active字段，并激活IO线程
         return handleClientsWithPendingWrites();
     }
 
@@ -4261,7 +4330,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     listNode *ln;
     listRewind(server.clients_pending_write,&li);
     int item_id = 0;
-    while((ln = listNext(&li))) {
+    while((ln = listNext(&li))) {// 步骤3、分配写回任务
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
 
@@ -4288,6 +4357,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     }
 
     /* 通过设置启动条件原子变量，为等待线程提供启动条件。
+     * 步骤4、设置io_threads_op全局标识为 IO_THREADS_OP_WRITE
      * Give the start condition to the waiting threads, by setting the
      * start condition atomic var. */
     io_threads_op = IO_THREADS_OP_WRITE;
@@ -4296,7 +4366,9 @@ int handleClientsWithPendingWritesUsingThreads(void) {
         setIOPendingCount(j, count);
     }
 
-    /* Also use the main thread to process a slice of clients. */
+    /* 还可以使用主线程处理一部分客户端。
+     * 步骤5、主线程处理io_threads_list[0]这个队列中的client
+     * Also use the main thread to process a slice of clients. */
     listRewind(io_threads_list[0],&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
@@ -4304,7 +4376,9 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     }
     listEmpty(io_threads_list[0]);
 
-    /* Wait for all the other threads to end their work. */
+    /* 等待所有其他线程结束其工作。
+     * 步骤6、等到主线程以及全部IO线程都处理完了自己的任务
+     * Wait for all the other threads to end their work. */
     while(1) {
         unsigned long pending = 0;
         for (int j = 1; j < server.io_threads_num; j++)
@@ -4314,7 +4388,11 @@ int handleClientsWithPendingWritesUsingThreads(void) {
 
     io_threads_op = IO_THREADS_OP_IDLE;
 
-    /* Run the list of clients again to install the write handler where
+    /*  步骤7、重新逐个检查一下server.clients_pending_write队列中的client，
+     *
+     * 是不是还有数据要返回客户端。如果有的话，会调用 CT_Socket.set_write_handler 函数
+     * 将 sendReplyToClient() 函数设置为 connection-> write_handler 回调函数
+     * Run the list of clients again to install the write handler where
      * needed. */
     listRewind(server.clients_pending_write,&li);
     while((ln = listNext(&li))) {
@@ -4330,10 +4408,12 @@ int handleClientsWithPendingWritesUsingThreads(void) {
         }
     }
     while(listLength(server.clients_pending_write) > 0) {
+        // 清空server.clients_pending_write队列
         listUnlinkNode(server.clients_pending_write, server.clients_pending_write->head);
     }
 
-    /* Update processed count on server */
+    /* 更新服务器上的已处理计数
+     * Update processed count on server */
     server.stat_io_writes_processed += processed;
 
     return processed;
@@ -4386,7 +4466,8 @@ int handleClientsWithPendingReadsUsingThreads(void) {//处理挂起的读取客�
     int processed = listLength(server.clients_pending_read);
     if (processed == 0) return 0;
 
-    /* Distribute the clients across N different lists. */
+    /* 将客户机分布在N个不同的列表中
+     * Distribute the clients across N different lists. */
     listIter li;
     listNode *ln;
     listRewind(server.clients_pending_read,&li);
@@ -4398,7 +4479,8 @@ int handleClientsWithPendingReadsUsingThreads(void) {//处理挂起的读取客�
         item_id++;
     }
 
-    /* Give the start condition to the waiting threads, by setting the
+    /* 通过设置启动条件原子变量，为等待线程提供启动条件。
+     * Give the start condition to the waiting threads, by setting the
      * start condition atomic var. */
     io_threads_op = IO_THREADS_OP_READ;
     for (int j = 1; j < server.io_threads_num; j++) {
@@ -4406,7 +4488,8 @@ int handleClientsWithPendingReadsUsingThreads(void) {//处理挂起的读取客�
         setIOPendingCount(j, count);
     }
 
-    /* Also use the main thread to process a slice of clients. */
+    /* 还可以使用主线程处理一部分客户端。
+     * Also use the main thread to process a slice of clients. */
     listRewind(io_threads_list[0],&li);
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
@@ -4414,7 +4497,8 @@ int handleClientsWithPendingReadsUsingThreads(void) {//处理挂起的读取客�
     }
     listEmpty(io_threads_list[0]);
 
-    /* Wait for all the other threads to end their work. */
+    /* 等待所有其他线程结束其工作。
+     * Wait for all the other threads to end their work. */
     while(1) {
         unsigned long pending = 0;
         for (int j = 1; j < server.io_threads_num; j++)
@@ -4422,27 +4506,30 @@ int handleClientsWithPendingReadsUsingThreads(void) {//处理挂起的读取客�
         if (pending == 0) break;
     }
 
-    io_threads_op = IO_THREADS_OP_IDLE;
+    io_threads_op = IO_THREADS_OP_IDLE;//表示 IO 线程全部空闲了
 
-    /* Run the list of clients again to process the new buffers. */
+    /* 再次运行客户端列表以处理新缓冲区
+     * Run the list of clients again to process the new buffers. */
     while(listLength(server.clients_pending_read)) {
-        ln = listFirst(server.clients_pending_read);
-        client *c = listNodeValue(ln);
-        listDelNode(server.clients_pending_read,ln);
+        ln = listFirst(server.clients_pending_read);//返回这个链表的头节点
+        client *c = listNodeValue(ln);//返回该节点的值，即客户端信息
+        listDelNode(server.clients_pending_read,ln);//取出该节点的值以后，删除该节点
         c->pending_read_list_node = NULL;
 
         serverAssert(!(c->flags & CLIENT_BLOCKED));
 
         if (beforeNextClient(c) == C_ERR) {
-            /* If the client is no longer valid, we avoid
+            /* 如果客户端不再有效，所以我们就去下一个
+             * If the client is no longer valid, we avoid
              * processing the client later. So we just go
              * to the next. */
             continue;
         }
 
-        /* Once io-threads are idle we can update the client in the mem usage */
+        /* 一旦io线程空闲，我们就可以在mem使用中更新客户端
+         * Once io-threads are idle we can update the client in the mem usage */
         updateClientMemUsageAndBucket(c);
-
+        //处理待执行的命令
         if (processPendingCommandAndInputBuffer(c) == C_ERR) {
             /* If the client is no longer valid, we avoid
              * processing the client later. So we just go
@@ -4450,14 +4537,17 @@ int handleClientsWithPendingReadsUsingThreads(void) {//处理挂起的读取客�
             continue;
         }
 
-        /* We may have pending replies if a thread readQueryFromClient() produced
+        /* 如果线程readQueryFromClient（）生成了回复，
+         * 并且没有将客户端放入挂起的写入队列（它不能），我们可能会有挂起的回复
+         * We may have pending replies if a thread readQueryFromClient() produced
          * replies and did not put the client in pending write queue (it can't).
          */
         if (!(c->flags & CLIENT_PENDING_WRITE) && clientHasPendingReplies(c))
             putClientInPendingWriteQueue(c);
     }
 
-    /* Update processed count on server */
+    /* 更新服务器上的已处理计数
+     * Update processed count on server */
     server.stat_io_reads_processed += processed;
 
     return processed;

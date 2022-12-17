@@ -314,15 +314,15 @@ void psetexCommand(client *c) {
 
 int getGenericCommand(client *c) {
     robj *o;
-
+    // 从Redis DB里面中查找value值
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL)
         return C_OK;
 
-    if (checkType(c,o,OBJ_STRING)) {
+    if (checkType(c,o,OBJ_STRING)) {//类型检查
         return C_ERR;
     }
 
-    addReplyBulk(c,o);
+    addReplyBulk(c,o);// 对返回值o进行编码并返回
     return C_OK;
 }
 

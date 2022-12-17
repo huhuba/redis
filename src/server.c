@@ -3736,7 +3736,12 @@ uint64_t getCommandFlags(client *c) {
     return cmd_flags;
 }
 
-/* If this function gets called we already read a whole
+/* 如果调用此函数，我们已经读取了一个完整的命令，参数位于客户端argvargc字段中。
+ * processCommand（）执行命令或准备服务器从客户端进行批量读取。
+ * 如果返回C_OK，则客户端仍处于活动状态且有效，调用方可以执行其他操作。
+ * 否则，如果返回C_ERR，则客户端被销毁（即在QUIT之后）
+ *
+ * If this function gets called we already read a whole
  * command, arguments are in the client argv/argc fields.
  * processCommand() execute the command or prepare the
  * server for a bulk read from the client.
@@ -3746,7 +3751,11 @@ uint64_t getCommandFlags(client *c) {
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
 int processCommand(client *c) {
     if (!scriptIsTimedout()) {
-        /* Both EXEC and scripts call call() directly so there should be
+        /* EXEC和脚本都直接调用call（），
+         * 所以在_EXEC或scriptIsRunning（）中不应该有任何方法是1。
+         * 这是除非lua_utimedout，在这种情况下客户端可能会运行一些命令
+         *
+         * Both EXEC and scripts call call() directly so there should be
          * no way in_exec or scriptIsRunning() is 1.
          * That is unless lua_timedout, in which case client may run
          * some commands. */
@@ -3756,13 +3765,15 @@ int processCommand(client *c) {
 
     moduleCallCommandFilters(c);
 
-    /* Handle possible security attacks. */
+    /* 处理可能的安全攻击。
+     * Handle possible security attacks. */
     if (!strcasecmp(c->argv[0]->ptr,"host:") || !strcasecmp(c->argv[0]->ptr,"post")) {
         securityWarningCommand(c);
         return C_ERR;
     }
 
-    /* If we're inside a module blocked context yielding that wants to avoid
+    /* 如果我们在一个模块阻塞的上下文生成中，想要避免处理客户端，请推迟该命令。
+     * If we're inside a module blocked context yielding that wants to avoid
      * processing clients, postpone the command. */
     if (server.busy_module_yield_flags != BUSY_MODULE_YIELD_NONE &&
         !(server.busy_module_yield_flags & BUSY_MODULE_YIELD_CLIENTS))
@@ -3772,7 +3783,8 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Now lookup the command and check ASAP about trivial error conditions
+    /* 现在查找命令，并尽快检查诸如错误的arity、错误的命令名等常见错误情况。
+     * Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
     c->cmd = c->lastcmd = c->realcmd = lookupCommand(c->argv,c->argc);
     sds err;
@@ -3785,7 +3797,8 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Check if the command is marked as protected and the relevant configuration allows it */
+    /* 检查命令是否标记为受保护且相关配置允许
+     * Check if the command is marked as protected and the relevant configuration allows it */
     if (c->cmd->flags & CMD_PROTECTED) {
         if ((c->cmd->proc == debugCommand && !allowProtectedAction(server.enable_debug_cmd, c)) ||
             (c->cmd->proc == moduleCommand && !allowProtectedAction(server.enable_module_cmd, c)))
@@ -4054,7 +4067,8 @@ int processCommand(client *c) {
         return C_OK;       
     }
 
-    /* Exec the command */
+    /* 执行命令
+     * Exec the command */
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand &&
         c->cmd->proc != discardCommand &&
@@ -4063,13 +4077,13 @@ int processCommand(client *c) {
         c->cmd->proc != quitCommand &&
         c->cmd->proc != resetCommand)
     {
-        queueMultiCommand(c, cmd_flags);
-        addReply(c,shared.queued);
-    } else {
+        queueMultiCommand(c, cmd_flags);// 将当前命令入队，等待后续执行
+        addReply(c,shared.queued);// 给客户端返回"+QUEUED"字符串
+    } else {// 调用call()函数执行命令
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))
-            handleClientsBlockedOnKeys();
+            handleClientsBlockedOnKeys(); // 唤醒阻塞的客户端
     }
 
     return C_OK;

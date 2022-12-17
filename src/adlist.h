@@ -43,7 +43,7 @@ typedef struct listIter {
     listNode *next;
     int direction;
 } listIter;
-
+/* 链表结构*/
 typedef struct list {
     listNode *head;
     listNode *tail;
@@ -53,7 +53,8 @@ typedef struct list {
     unsigned long len;
 } list;
 
-/* Functions implemented as macros */
+/* 作为宏实现的函数
+ * Functions implemented as macros */
 #define listLength(l) ((l)->len)
 #define listFirst(l) ((l)->head)
 #define listLast(l) ((l)->tail)

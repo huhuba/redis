@@ -34,7 +34,8 @@
 
 typedef struct aeApiState {
     fd_set rfds, wfds;
-    /* We need to have a copy of the fd sets as it's not safe to reuse
+    /* 我们需要一个fd集的副本，因为在select（）之后重用fd集是不安全的。
+     * We need to have a copy of the fd sets as it's not safe to reuse
      * FD sets after select(). */
     fd_set _rfds, _wfds;
 } aeApiState;
