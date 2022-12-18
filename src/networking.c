@@ -132,7 +132,7 @@ client *createClient(connection *conn) {
         connEnableTcpNoDelay(conn);// 设置TCP_NODELAY
         if (server.tcpkeepalive)
             connKeepAlive(conn,server.tcpkeepalive);// 设置keeplive
-        connSetReadHandler(conn, );// 调用CT_Socket->set_read_handler回调函数
+        connSetReadHandler(conn, readQueryFromClient);// 调用CT_Socket->set_read_handler回调函数
         connSetPrivateData(conn, c);// 设置connection->private_data，与client绑定
     }
     c->buf = zmalloc(PROTO_REPLY_CHUNK_BYTES);
