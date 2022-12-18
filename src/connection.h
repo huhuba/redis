@@ -150,11 +150,12 @@ struct connection {
 
 #define CONFIG_BINDADDR_MAX 16
 
-/* 按连接类型设置侦听器
+/* 监听ip
+ * 按连接类型设置侦听器
  * Setup a listener by a connection type */
 struct connListener {
     int fd[CONFIG_BINDADDR_MAX];// 记录了每个监听地址对应的文件描述符
-    int count; // fd数组的个数
+    int count; // 监听ip地址的fd的个数
     char **bindaddr;//监听地址
     int bindaddr_count;//绑定地址总数量
     int port;//监听端口

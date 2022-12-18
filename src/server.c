@@ -2326,7 +2326,7 @@ void closeListener(connListener *sfd) {
 int createSocketAcceptHandler(connListener *sfd, aeFileProc *accept_handler) {
     int j;
 
-    for (j = 0; j < sfd->count; j++) { // 监听每个文件描述符上的可读事件
+    for (j = 0; j < sfd->count; j++) { // 监听每个ip的文件描述符上的可读事件
         if (aeCreateFileEvent(server.el, sfd->fd[j], AE_READABLE, accept_handler,sfd) == AE_ERR) {
             /* 如果创建事件出错，则删除对应事件。Rollback */
             for (j = j-1; j >= 0; j--) aeDeleteFileEvent(server.el, sfd->fd[j], AE_READABLE);
@@ -2713,7 +2713,8 @@ void initListeners() {
         listener->priv = &server.unixsocketperm; /* Unix socket specified */
     }
 
-    /* create all the configured listener, and add handler to start to accept */
+    /* 创建所有已配置的侦听器，并添加处理程序以开始accept连接
+     * create all the configured listener, and add handler to start to accept */
     int listen_fds = 0;
     for (int j = 0; j < CONN_TYPE_MAX; j++) {
         listener = &server.listeners[j];
@@ -2724,7 +2725,7 @@ void initListeners() {
             serverLog(LL_WARNING, "Failed listening on port %u (%s), aborting.", listener->port, listener->ct->get_type(NULL));
             exit(1);
         }
-        //
+        //创建Socket连接处理器
         if (createSocketAcceptHandler(listener, connAcceptHandler(listener->ct)) != C_OK)
             serverPanic("Unrecoverable error creating %s listener accept handler.", listener->ct->get_type(NULL));
 

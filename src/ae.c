@@ -408,7 +408,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         /* 调用多路复用API拉取事件，将仅在超时或某些事件触发时返回。
          * Call the multiplexing API, will return only on timeout or when
          * some event fires. */
-        numevents = aeApiPoll(eventLoop, tvp);
+        numevents = aeApiPoll(eventLoop, tvp);//返回事件数量
 
         /* 如果未请求，则不处理文件事件。
          * Don't process file events if not requested. */
@@ -420,7 +420,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
             eventLoop->aftersleep(eventLoop);
 
-        for (j = 0; j < numevents; j++) {
+        for (j = 0; j < numevents; j++) {//遍历处理事件
             int fd = eventLoop->fired[j].fd;
             aeFileEvent *fe = &eventLoop->events[fd];
             int mask = eventLoop->fired[j].mask;
@@ -452,7 +452,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
             }
 
-            /* Fire the writable event. */
+            /* 激发可写事件。
+             * Fire the writable event. */
             if (fe->mask & mask & AE_WRITABLE) {
                 if (!fired || fe->wfileProc != fe->rfileProc) {
                     // 调用wfileProc函数处理可写事件
