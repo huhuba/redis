@@ -1121,21 +1121,41 @@ typedef struct {
 } clientMemUsageBucket;
 
 typedef struct client {
+    // client实例的自增id，默认是通过server.next_client_id自增得到的，
+    // 也可自定义。server.next_client_id是一个原子类型的整数，其自增是原子操作
     uint64_t id;            /* Client incremental unique ID. */
+
+    // flags字段中记录了当前client的状态信息，其中每一位表示一个状态，例如，
+    // CLIENT_PENDING_READ (1<<29)表示当前connection连接有请求需要读取和解析
+    // CLIENT_PENDING_COMMAND (1<<30)表示有解析好的、待执行的命令
+    // CLIENT_PENDING_WRITE (1<<21)表示有响应需要返回该client对应的客户端
+    // CLIENT_MULTI (1<<3)表示当前处于一个事务上下文中
+    // flags中还有非常非常多的状态位，这里不再一一展开介绍了，后面用到再说
     uint64_t flags;         /* Client flags: CLIENT_* macros. */
-    connection *conn;
+    connection *conn;    // connection抽象了当前Redis实例与该客户端之间的网络连接
+    // resp记录当前客户端支持的RESP协议版本，可选值为2和3，分别代表RESP2协议
+    // 和RESP3协议，这两个版本协议的差别我们后面展开
     int resp;               /*ESP协议版本。可以是2或3. RESP protocol version. Can be 2 or 3. */
+    // 当前客户端操作的DB，默认是编号0的DB，实际生产中，我们一般只使用编号为0的DB
     redisDb *db;            /*指向当前选定数据库的指针. Pointer to currently SELECTed DB. */
     robj *name;             /* As set by CLIENT SETNAME. */
+    // 下面是与请求读取相关的字段，客户端通过connection连接发送请求时，请求会写入
+    // querybuf缓冲区缓存，qb_pos记录了querybuf缓冲区中有效的字节数，
+    // querybuf_peak记录了最近一段时间内querybuf的最大值
     sds querybuf;           /*我们用来累积客户端查询的缓冲区. Buffer we use to accumulate client queries. */
     size_t qb_pos;          /*我们在querybuf中读取的位置. The position we have read in querybuf. */
     size_t querybuf_peak;   /*querybuf大小的最近（100ms或更长）峰值.  Recent (100ms or more) peak of querybuf size. */
+    // querybuf缓冲区中累计了足够多的数据之后，会按照RESP协议解析成Redis命令，
+    // 这里的argc字段记录了解析后Redis命令的参数个数(包括命令名称本身)，argv
+    // 字段指向的robj*数组用来存储解析后的命令参数(以字符串类型存储)
     int argc;               /* 当前命令的参数数量.Num of arguments of current command. */
     robj **argv;            /* 当前命令的内容 。Arguments of current command. */
     int argv_len;           /* argv数组的大小（可能大于argc）。Size of argv array (may be more than argc) */
     int original_argc;      /* 如果参数被重写，则为原始命令的参数数量。 Num of arguments of original command if arguments were rewritten. */
     robj **original_argv;   /*如果参数被重写，则返回原始命令的内容。 Arguments of original command if arguments were rewritten. */
     size_t argv_len_sum;    /* Sum of lengths of objects in argv list. */
+    // Redis会根据解析得到的命令名称找到要执行的redisCommand，并用cmd、lastcmd
+    // 两个字段进行记录
     struct redisCommand *cmd, *lastcmd;  /* Last command executed. */
     struct redisCommand *realcmd; /* The original command that was executed by the client,
                                      Used to update error stats in case the c->cmd was modified
@@ -1143,19 +1163,28 @@ typedef struct client {
     user *user;             /* User associated with this connection. If the
                                user is set to NULL the connection can do
                                anything (admin). */
+    // 在Redis客户端与Server端交互的RESP协议中，请求有PROTO_REQ_INLINE、
+    // PROTO_REQ_MULTIBULK两种格式，reqtype字段就是用来记录当前请求的格式
+    // 下面的multibulklen、bulklen都是在解析PROTO_REQ_MULTIBULK格式请求时，
+    // 使用到的辅助字段
     int reqtype;            /* Request protocol type: PROTO_REQ_* */
     int multibulklen;       /* Number of multi bulk arguments left to read. */
     long bulklen;           /* Length of bulk argument in multi bulk request. */
     list *reply;            /* 要发送到客户端的回复对象列表。List of reply objects to send to the client. */
-    unsigned long long reply_bytes; /* Tot bytes of objects in reply list. */
+    unsigned long long reply_bytes; /* 记录reply中的总字节数。Tot bytes of objects in reply list. */
     list *deferred_reply_errors;    /* Used for module thread safe contexts. */
+    // sentlen发送一个缓冲区数据时，记录此次发送长度，从而帮助判断该缓冲区是
+    // 否完全发送完毕
     size_t sentlen;         /* Amount of bytes already sent in the current
                                buffer or object being sent. */
+    // 下面是一些统计信息，ctime记录了client实例的创建时间；
     time_t ctime;           /* Client creation time. */
+    // duration用于记录一次命令的执行时长；
     long duration;          /* Current command duration. Used for measuring latency of blocking/non-blocking cmds */
-    int slot;               /* The slot the client is executing against. Set to -1 if no slot is being used */
-    dictEntry *cur_script;  /* Cached pointer to the dictEntry of the script being executed. */
+    // lastinteraction用于记录该client实例表示的Redis客户端与当前Redis Server最近一次发生交互的时间戳，用于判断客户端是否超时
     time_t lastinteraction; /* Time of the last interaction, used for timeout */
+    int slot;               /* 客户端正在执行的插槽。如果未使用插槽，则设置为-1。 The slot the client is executing against. Set to -1 if no slot is being used */
+    dictEntry *cur_script;  /* Cached pointer to the dictEntry of the script being executed. */
     time_t obuf_soft_limit_reached_time;
     int authenticated;      /* Needed when the default user requires auth. */
     int replstate;          /* Replication state if this is a slave. */
@@ -1229,6 +1258,12 @@ typedef struct client {
     /* Response buffer */
     size_t buf_peak; /* Peak used size of buffer in last 5 sec interval. */
     mstime_t buf_peak_last_reset_time; /* keeps the last time the buffer peak value was reset */
+    // 下面是Redis Server端返回响应相关的字段，buf字段是返回响应时使用的缓冲区，
+    // 默认是16K，bufpos字段记录buf数组的实际使用长度, buf_usable_size字段记录
+    // 了buf缓冲区剩余的可用空间大小。当buf缓冲区写满之后，
+    // 后续的数据将会追加到reply列表中，其中每个元素都是clientReplyBlock实例
+    // (也是16K的缓冲区），写满其中一个clientReplyBlock实例之后才会再追加新
+    // 的clientReplyBlock实例
     int bufpos;//使用 bufpos 字段记录 buf 缓冲区中最后一个有效字节的位置。
     size_t buf_usable_size; /* Usable size of buffer. */
     char *buf;//作为缓冲区可以暂存返回给对应客户端的数据，使用 bufpos 字段记录 buf 缓冲区中最后一个有效字节的位置。
@@ -2272,7 +2307,7 @@ typedef int redisGetKeysProc(struct redisCommand *cmd, robj **argv, int argc, ge
  *    TYPE, EXPIRE*, PEXPIRE*, TTL, PTTL, ...
  */
 struct redisCommand {
-    /* Declarative data */
+    /*declared_name记录了命令名称，也是redisServer.commands中的key。 Declarative data */
     const char *declared_name; /* A string representing the command declared_name.
                                 * It is a const char * for native commands and SDS for module commands. */
     const char *summary; /* Summary of the command (optional). */
@@ -2283,30 +2318,42 @@ struct redisCommand {
     const char *deprecated_since; /* In case the command is deprecated, when did it happen? */
     redisCommandGroup group; /* Command group */
     commandHistory *history; /* History of the command */
-    const char **tips; /* An array of strings that are meant to be tips for clients/proxies regarding this command */
+    // 省略一些介绍性的字段，比如summary、complexity、since等等字段，分别说明
+    // 了这条命令的大概功能、详细说明以及从Redis的哪个什么版本开始支持这条信息等等，
+    // 这些字段中记录的只是命令介绍性的信息，与命令本身执行没什么关系。
+    const char **tips; /*一个字符串数组，用于为客户端提供有关此命令的提示. An array of strings that are meant to be tips for clients/proxies regarding this command */
+    //proc指向了命令处理函数，也就是处理该命令的入口
     redisCommandProc *proc; /* Command implementation */
+    //arity指定了命令参数的个数
     int arity; /* Number of arguments, it is possible to use -N to say >= N */
-    uint64_t flags; /* Command flags, see CMD_*. */
+    uint64_t flags; /*命令标识。 Command flags, see CMD_*. */
     uint64_t acl_categories; /* ACl categories, see ACL_CATEGORY_*. */
     keySpec key_specs_static[STATIC_KEY_SPECS_NUM]; /* Key specs. See keySpec */
-    /* Use a function to determine keys arguments in a command line.
+    /* 一条命令可能操作多个Key，这个函数用来提取命令中所有Key的位置
+     * Use a function to determine keys arguments in a command line.
      * Used for Redis Cluster redirect (may be NULL) */
     redisGetKeysProc *getkeys_proc;
-    /* Array of subcommands (may be NULL) */
+    /* 一条Redis命令下面可能还有子命令，这些子命令就记录在subcommands数组，
+     * 相应的哈希结构存储在subcommands_dict这个字典中
+     *
+     * Array of subcommands (may be NULL) */
     struct redisCommand *subcommands;
     /* Array of arguments (may be NULL) */
     struct redisCommandArg *args;
 
-    /* Runtime populated data */
+    /* 统计信息，microseconds是从Redis实例启动到现在该命令的总执行时间，
+     * calls是该命令的总调用次数，rejected_calls、failed_calls分别是
+     * 该命令的拒绝次数和失败次数
+     * Runtime populated data */
     long long microseconds, calls, rejected_calls, failed_calls;
-    int id;     /* Command ID. This is a progressive ID starting from 0 that
+    int id;     /*命令的唯一ID，从0开始分配。 Command ID. This is a progressive ID starting from 0 that
                    is assigned at runtime, and is used in order to check
                    ACLs. A connection is able to execute a given command if
                    the user associated to the connection has this command
                    bit set in the bitmap of allowed commands. */
     sds fullname; /* A SDS string representing the command fullname. */
     struct hdr_histogram* latency_histogram; /*points to the command latency command histogram (unit of time nanosecond) */
-    keySpec *key_specs;
+    keySpec *key_specs;//这里的key_specs、args、subcommand字段以及前面的key_specs_static都是用来描述命令的，
     keySpec legacy_range_key_spec; /* The legacy (first,last,step) key spec is
                                      * still maintained (if applicable) so that
                                      * we can still support the reply format of
@@ -2318,7 +2365,7 @@ struct redisCommand {
     int key_specs_max;
     dict *subcommands_dict; /* A dictionary that holds the subcommands, the key is the subcommand sds name
                              * (not the fullname), and the value is the redisCommand structure pointer. */
-    struct redisCommand *parent;
+    struct redisCommand *parent;//父命令指针
     struct RedisModuleCommand *module_cmd; /* A pointer to the module command data (NULL if native command) */
 };
 

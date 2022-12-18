@@ -447,7 +447,8 @@ dictType zsetDictType = {
     NULL                       /* allow to expand */
 };
 
-/* Db->dict, keys are sds strings, vals are Redis objects. */
+/* Db->dict，key是sds字符串，vals是Redis对象。
+ * Db->dict, keys are sds strings, vals are Redis objects. */
 dictType dbDictType = {
     dictSdsHash,                /* hash function */
     NULL,                       /* key dup */
@@ -2030,9 +2031,9 @@ void initServerConfig(void) {
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType);
     server.orig_commands = dictCreate(&commandTableDictType);
-    populateCommandTable();
+    populateCommandTable();// 将redisCommandTable填充到commands中
 
-    /* Debugging */
+    /* 调试。Debugging */
     server.watchdog_period = 0;
 }
 
@@ -2538,8 +2539,9 @@ void initServer(void) {
     }
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
-    /* Create the Redis databases, and initialize other internal state. */
-    for (j = 0; j < server.dbnum; j++) {
+    /* 创建Redis数据库，并初始化其他内部状态。
+     * Create the Redis databases, and initialize other internal state. */
+    for (j = 0; j < server.dbnum; j++) {// 初始化dbnum个redisDb实例
         server.db[j].dict = dictCreate(&dbDictType);
         server.db[j].expires = dictCreate(&dbExpiresDictType);
         server.db[j].expires_cursor = 0;
