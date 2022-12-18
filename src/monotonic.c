@@ -8,7 +8,7 @@
 #include <assert.h>
 
 
-/* The function pointer for clock retrieval.  */
+/*  时钟检索的函数指针 The function pointer for clock retrieval.  */
 monotime (*getMonotonicUs)(void) = NULL;
 
 static char monotonic_info_string[32];

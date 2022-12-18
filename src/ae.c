@@ -136,7 +136,9 @@ int aeResizeSetSize(aeEventLoop *eventLoop, int setsize) {
         eventLoop->events[i].mask = AE_NONE;
     return AE_OK;
 }
-
+/*
+ * 释放eventLoop空间
+ */
 void aeDeleteEventLoop(aeEventLoop *eventLoop) {
     aeApiFree(eventLoop);
     zfree(eventLoop->events);
@@ -155,7 +157,7 @@ void aeDeleteEventLoop(aeEventLoop *eventLoop) {
 void aeStop(aeEventLoop *eventLoop) {
     eventLoop->stop = 1;
 }
-
+/* 通过ip的文件描述符，给监听的ip注册事件处理器*/
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
@@ -251,7 +253,8 @@ int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id)
     return AE_ERR; /* NO event with the specified ID found */
 }
 
-/* How many microseconds until the first timer should fire.
+/* 第一个计时器应该启动之前的微秒数。如果没有计时器，则返回-1。
+ * How many microseconds until the first timer should fire.
  * If there are no timers, -1 is returned.
  *
  * Note that's O(N) since time events are unsorted.
@@ -329,11 +332,11 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
 
             id = te->id;
             te->refcount++;
-            // 触发事件
-            retval = te->timeProc(eventLoop, id, te->clientData);
+
+            retval = te->timeProc(eventLoop, id, te->clientData);// 处理事件
             te->refcount--;
             processed++;
-            now = getMonotonicUs();
+            now = getMonotonicUs();//获取当前的时间
             if (retval != AE_NOMORE) {// 更新下次触发的时间戳
                 te->when = now + retval * 1000;
             } else {// 之后不再触发该事件
@@ -364,10 +367,11 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 {
     int processed = 0, numevents;
 
-    /* Nothing to do? return ASAP */
+    /* 没事做？尽快返回 Nothing to do? return ASAP */
     if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
 
-    /* Note that we want to call select() even if there are no
+    /* 请注意，只要我们想处理时间事件，即使没有要处理的文件事件，我们也要调用select（），以便在下一个时间事件准备就绪之前休眠。
+     * Note that we want to call select() even if there are no
      * file events to process as long as we want to process time
      * events, in order to sleep until the next time event is ready
      * to fire. */
@@ -385,7 +389,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             tv.tv_usec = usUntilTimer % 1000000;
             tvp = &tv;
         } else {
-            /* If we have to check for events but need to return
+            /* 如果我们必须检查事件，但由于AE_DONT_WAIT而需要尽快返回，则需要将超时设置为零
+             * If we have to check for events but need to return
              * ASAP because of AE_DONT_WAIT we need to set the timeout
              * to zero */
             if (flags & AE_DONT_WAIT) {
@@ -416,7 +421,8 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             numevents = 0;
         }
 
-        /* After sleep callback. */
+        /* epoll_wait拉取事件后调用
+         * After sleep callback. */
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
             eventLoop->aftersleep(eventLoop);
 

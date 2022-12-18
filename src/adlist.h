@@ -70,7 +70,7 @@ typedef struct list {
 #define listGetFreeMethod(l) ((l)->free)
 #define listGetMatchMethod(l) ((l)->match)
 
-/* Prototypes */
+/* 创建新列表 Prototypes */
 list *listCreate(void);
 void listRelease(list *list);
 void listEmpty(list *list);

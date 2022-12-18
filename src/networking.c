@@ -1240,7 +1240,8 @@ int clientHasPendingReplies(client *c) {
     }
 }
 
-/* Return true if client connected from loopback interface */
+/* 如果客户端从环回接口连接，则返回true
+ * Return true if client connected from loopback interface */
 int islocalClient(client *c) {
     /* unix-socket */
     if (c->flags & CLIENT_UNIX_SOCKET) return 1;
@@ -4117,7 +4118,7 @@ threads_pending io_threads_pending[IO_THREADS_MAX_NUM];
 // IO_THREADS_OP_IDLE表示所有IO线程空闲，此时主线程在执行命令
 int io_threads_op;      /* IO_THREADS_OP_IDLE, IO_THREADS_OP_READ or IO_THREADS_OP_WRITE. */ // TODO: should access to this be atomic??!
 
-/* io_threads_list中每个元素都是一个列表，列表中存储的都是处理的client实例，
+/* io_threads_list中每个元素都是一个列表，列表中存储的都是待处理的client实例，
  * io_threads中的IO线程会处理io_threads_list中对应下标的client列表
  *这是使用线程IO时每个线程将服务的客户端列表。我们派生io_threads_num-1线程，因为其中一个是主线程本身。
  * This is the list of clients each thread will serve when threaded I/O is
@@ -4191,7 +4192,7 @@ void *IOThreadMain(void *myid) {
     }
 }
 
-/* 初始化线程IO所需的数据结构。
+/* 初始化IO线程所需的数据结构。
  * Initialize the data structures needed for threaded I/O. */
 void initThreadedIO(void) {
     server.io_threads_active = 0; /* 我们从线程不活动开始。We start with threads not active. */

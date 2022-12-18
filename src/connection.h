@@ -143,8 +143,8 @@ struct connection {
     // 下面是该连接在connect、read、write截断的回调函数，其实，aeFileEvent中的
     // rfileProc、wfileProc两个字段指向的就是read_handler、write_handler这两个函数
     ConnectionCallbackFunc conn_handler;
-    ConnectionCallbackFunc write_handler;
-    ConnectionCallbackFunc read_handler;
+    ConnectionCallbackFunc write_handler;//例如：sendReplyToClient
+    ConnectionCallbackFunc read_handler;//例如：readQueryFromClient
     int fd;// 该连接对应的文件描述符
 };
 
@@ -154,6 +154,7 @@ struct connection {
  * 按连接类型设置侦听器
  * Setup a listener by a connection type */
 struct connListener {
+    /* 多个ip的fd数组 */
     int fd[CONFIG_BINDADDR_MAX];// 记录了每个监听地址对应的文件描述符
     int count; // 监听ip地址的fd的个数
     char **bindaddr;//监听地址
@@ -479,12 +480,14 @@ int connTypeHasPendingData(void);
 /* walk all the connection types and process pending data for each connection type */
 int connTypeProcessPendingData(void);
 
-/* Listen on an initialized listener */
+/* 开始在链接上监听
+ * Listen on an initialized listener */
 static inline int connListen(connListener *listener) {
     return listener->ct->listen(listener);
 }
 
-/* Get accept_handler of a connection type */
+/* 从ConnectionType 获取accept_handler
+ * Get accept_handler of a connection type */
 static inline aeFileProc *connAcceptHandler(ConnectionType *ct) {
     if (ct)
         return ct->accept_handler;

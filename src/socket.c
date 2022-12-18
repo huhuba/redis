@@ -218,7 +218,7 @@ static int connSocketAccept(connection *conn, ConnectionCallbackFunc accept_hand
     return ret;
 }
 
-/* 注册一个写程序
+/* 注册一个连接的写回调函数
  * Register a write handler, to be called when the connection is writable.
  * If NULL, the existing handler is removed.
  *
@@ -449,7 +449,7 @@ static ConnectionType CT_Socket = {
     .write = connSocketWrite,
     .writev = connSocketWritev,
     .read = connSocketRead,
-    .set_write_handler = connSocketSetWriteHandler,
+    .set_write_handler = connSocketSetWriteHandler,//
     .set_read_handler = connSocketSetReadHandler,
     .get_last_error = connSocketGetLastError,
     .sync_write = connSocketSyncWrite,

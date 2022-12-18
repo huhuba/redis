@@ -1557,7 +1557,8 @@ static void sendGetackToReplicas(void) {
 
 extern int ProcessingEventsWhileBlocked;
 
-/* This function gets called every time Redis is entering the
+/* 每当Redis进入事件驱动库的主循环时，即在休眠文件描述符(epoll_wait拉取事件)之前，都会调用此函数。
+ * This function gets called every time Redis is entering the
  * main loop of the event driven library, that is, before to sleep
  * for ready file descriptors.
  *
@@ -1595,26 +1596,34 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         return;
     }
 
-    /* Handle precise timeouts of blocked clients. */
+    /*
+     * 处理阻塞客户端的精确超时
+     * Handle precise timeouts of blocked clients. */
     handleBlockedClientsTimeout();
 
     /* 我们应该在事件循环后尽快处理挂起的读取客户端。
      * We should handle pending reads clients ASAP after event loop. */
     handleClientsWithPendingReadsUsingThreads();
 
-    /* Handle pending data(typical TLS). (must be done before flushAppendOnlyFile) */
+    /* 处理挂起的数据（典型TLS）。（必须在flushAppendOnlyFile之前完成）
+     * Handle pending data(typical TLS). (must be done before flushAppendOnlyFile) */
     connTypeProcessPendingData();
 
-    /* If any connection type(typical TLS) still has pending unread data don't sleep at all. */
+    /* 如果任何连接类型（典型的TLS）仍然有挂起的未读数据，请不要休眠
+     * If any connection type(typical TLS) still has pending unread data don't sleep at all. */
     aeSetDontWait(server.el, connTypeHasPendingData());
 
-    /* Call the Redis Cluster before sleep function. Note that this function
+    /* 在休眠前调用Redis群集功能。
+     * 请注意，此函数可能会更改Redis群集的状态（从ok到fail，反之亦然），
+     * 因此最好在稍后使用此函数服务未阻塞的客户端之前调用它
+     * Call the Redis Cluster before sleep function. Note that this function
      * may change the state of Redis Cluster (from ok to fail or vice versa),
      * so it's a good idea to call it before serving the unblocked clients
      * later in this function. */
     if (server.cluster_enabled) clusterBeforeSleep();
 
-    /* Run a fast expire cycle (the called function will return
+    /*运行快速过期循环（如果不需要快速循环，则调用的函数将尽快返回）。
+     * Run a fast expire cycle (the called function will return
      * ASAP if a fast cycle is not needed). */
     if (server.active_expire_enabled && server.masterhost == NULL)
         activeExpireCycle(ACTIVE_EXPIRE_CYCLE_FAST);
@@ -1651,7 +1660,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
         server.get_ack_from_slaves = 0;
     }
 
-    /* We may have received updates from clients about their current offset. NOTE:
+    /* 我们可能收到了客户关于其当前偏移量的更新。注意：在收到ACK的情况下无法执行此操作，因为故障切换将断开我们的客户端。
+     * We may have received updates from clients about their current offset. NOTE:
      * this can't be done where the ACK is received since failover will disconnect 
      * our clients. */
     updateFailoverStatus();
@@ -2325,7 +2335,7 @@ void closeListener(connListener *sfd) {
  * This works atomically for all socket fds */
 int createSocketAcceptHandler(connListener *sfd, aeFileProc *accept_handler) {
     int j;
-
+    //遍历所有的ip
     for (j = 0; j < sfd->count; j++) { // 监听每个ip的文件描述符上的可读事件
         if (aeCreateFileEvent(server.el, sfd->fd[j], AE_READABLE, accept_handler,sfd) == AE_ERR) {
             /* 如果创建事件出错，则删除对应事件。Rollback */
@@ -2555,7 +2565,7 @@ void initServer(void) {
         server.db[j].slots_to_keys = NULL; /* Set by clusterInit later on if necessary. */
         listSetFreeMethod(server.db[j].defrag_later,(void (*)(void*))sdsfree);
     }
-    evictionPoolAlloc(); /* Initialize the LRU keys pool. */
+    evictionPoolAlloc(); /*初始化LRU key池。  Initialize the LRU keys pool. */
     server.pubsub_channels = dictCreate(&keylistDictType);
     server.pubsub_patterns = dictCreate(&keylistDictType);
     server.pubsubshard_channels = dictCreate(&keylistDictType);
@@ -2619,7 +2629,8 @@ void initServer(void) {
     server.acl_info.user_auth_failures = 0;
     server.acl_info.invalid_channel_accesses = 0;
 
-    /* Create the timer callback, this is our way to process many background
+    /* 创建计时器回调，这是我们增量处理许多后台操作的方法，如客户端超时、驱逐未使用的过期密钥等
+     * Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
     if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
@@ -2627,7 +2638,8 @@ void initServer(void) {
         exit(1);
     }
 
-    /* Register a readable event for the pipe used to awake the event loop
+    /* 为用于从模块线程唤醒事件循环的管道注册可读事件
+     * Register a readable event for the pipe used to awake the event loop
      * from module threads. */
     if (aeCreateFileEvent(server.el, server.module_pipe[0], AE_READABLE,
         modulePipeReadable,NULL) == AE_ERR) {
@@ -2635,7 +2647,9 @@ void initServer(void) {
                 "Error registering the readable event for the module pipe.");
     }
 
-    /* Register before and after sleep handlers (note this needs to be done
+    /* 在休眠处理程序之前和之后注册
+     * （注意，这需要在加载持久性之前完成，因为它由processEventsWhileBlocked使用。
+     * Register before and after sleep handlers (note this needs to be done
      * before loading persistence since it is used by processEventsWhileBlocked. */
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeSetAfterSleepProc(server.el,afterSleep);
@@ -6653,7 +6667,8 @@ int checkForSentinelMode(int argc, char **argv, char *exec_name) {
     return 0;
 }
 
-/* Function called at startup to load RDB or AOF file in memory. */
+/* 在启动时调用函数以将RDB或AOF文件加载到内存中
+ * Function called at startup to load RDB or AOF file in memory. */
 void loadDataFromDisk(void) {
     long long start = ustime();
     if (server.aof_state == AOF_ON) {
@@ -7177,7 +7192,7 @@ int main(int argc, char **argv) {
     if (server.cluster_enabled) {
         clusterInitListeners();//集群模式初始化监听器
     }
-    InitServerLast();
+    InitServerLast();//在该方法中，初始化io线程(initThreadIO)
 
     if (!server.sentinel_mode) {
         /* Things not needed when running in Sentinel mode. */
@@ -7207,7 +7222,7 @@ int main(int argc, char **argv) {
     #endif /* __arm64__ */
     #endif /* __linux__ */
         aofLoadManifestFromDisk();
-        loadDataFromDisk();
+        loadDataFromDisk();//在启动时调用函数以将RDB或AOF文件加载到内存中
         aofOpenIfNeededOnServerStart();
         aofDelHistoryFiles();
         if (server.cluster_enabled) {
@@ -7236,7 +7251,7 @@ int main(int argc, char **argv) {
             redisCommunicateSystemd("READY=1\n");
         }
     } else {
-        sentinelIsRunning();
+        sentinelIsRunning();//哨兵？
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
             redisCommunicateSystemd("STATUS=Ready to accept connections\n");
             redisCommunicateSystemd("READY=1\n");
@@ -7248,8 +7263,8 @@ int main(int argc, char **argv) {
         serverLog(LL_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
 
-    redisSetCpuAffinity(server.server_cpulist);
-    setOOMScoreAdj(-1);
+    redisSetCpuAffinity(server.server_cpulist);//redis设置Cpu相关性
+    setOOMScoreAdj(-1);//设置OOM分数调整
 
     aeMain(server.el);//调用aeMain的主函数
     aeDeleteEventLoop(server.el);

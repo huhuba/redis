@@ -1586,7 +1586,7 @@ struct redisServer {
     char *bind_source_addr;     /* Source address to bind on for outgoing connections */
     char *unixsocket;           /* UNIX socket path */
     unsigned int unixsocketperm; /* UNIX socket permission (see mode_t) */
-    connListener listeners[CONN_TYPE_MAX]; /* TCP/Unix/TLS even more types */
+    connListener listeners[CONN_TYPE_MAX]; /*connListener数组 TCP/Unix/TLS甚至更多类型  TCP/Unix/TLS even more types */
     uint32_t socket_mark_id;    /* ID for listen socket marking */
     connListener clistener;     /* Cluster bus listener */
     list *clients;              /* 连接到当前redis实例的客户端列表. List of active clients */
