@@ -348,7 +348,16 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
     return processed;
 }
 
-/* Process every pending time event, then every pending file event
+/* 处理每一个挂起的时间事件，然后处理每个挂起的文件事件（可以通过刚刚处理的时间事件回调来注册）。
+ * 在没有特殊标志的情况下，函数将休眠，直到某个文件事件发生，或者下一次事件发生（如果有）。
+ * 如果标志为0，则函数不执行任何操作并返回。
+ * 如果标志设置了AE_ALL_EVENTS，则处理所有类型的事件。
+ * 如果标志已设置AE_FILE_EVENTS，则处理文件事件。
+ * 如果标志设置了AE_TIME_EVENTS，则处理时间事件。
+ * 如果标志已设置AE_DONT_WAIT，则在处理完无需等待即可处理的所有事件，函数将返回ASAP。
+ * 如果标志设置了AE_CALL_AFTER_SEEP，则调用睡眠后回调。
+ * 如果标志设置了AE_CALL_BEFORE_SLEEP，则调用beforeslep回调。该函数返回处理的事件数。
+ * Process every pending time event, then every pending file event
  * (that may be registered by time event callbacks just processed).
  * Without special flags the function sleeps until some file event
  * fires, or when the next time event occurs (if any).
@@ -458,7 +467,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
             }
 
-            /* 激发可写事件。
+            /* 触发可写事件。
              * Fire the writable event. */
             if (fe->mask & mask & AE_WRITABLE) {
                 if (!fired || fe->wfileProc != fe->rfileProc) {

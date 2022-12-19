@@ -4132,7 +4132,9 @@ static inline unsigned long getIOPendingCount(int i) {
     atomicGetWithSync(io_threads_pending[i].value, count);
     return count;
 }
-
+/*
+ * 设置分配给IO线程的任务数量
+ */
 static inline void setIOPendingCount(int i, unsigned long count) {
     atomicSetWithSync(io_threads_pending[i].value, count);
 }
@@ -4479,7 +4481,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {//处理挂起的读取客�
     listNode *ln;
     listRewind(server.clients_pending_read,&li);
     int item_id = 0;
-    while((ln = listNext(&li))) {
+    while((ln = listNext(&li))) {//将所有的待处理写客户端轮询分配给IO线程
         client *c = listNodeValue(ln);
         int target_id = item_id % server.io_threads_num;
         listAddNodeTail(io_threads_list[target_id],c);

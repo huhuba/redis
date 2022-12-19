@@ -1592,7 +1592,7 @@ struct redisServer {
     list *clients;              /* 连接到当前redis实例的客户端列表. List of active clients */
     list *clients_to_close;     /* Clients to close asynchronously */
     list *clients_pending_write; /*需要写入或安装处理程序缓冲区，可以理解为集合。 There is to write or install handler. */
-    list *clients_pending_read;  /*客户端具有挂起的读取套接字缓冲区，可以理解为集合. Client has pending read socket buffers. */
+    list *clients_pending_read;  /*所有客户端挂起的读取套接字缓冲区，可以理解为集合. Client has pending read socket buffers. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client;     /* Current client executing the command. */
 
