@@ -4120,7 +4120,8 @@ int io_threads_op;      /* IO_THREADS_OP_IDLE, IO_THREADS_OP_READ or IO_THREADS_
 
 /* io_threads_list中每个元素都是一个列表，列表中存储的都是待处理的client实例，
  * io_threads中的IO线程会处理io_threads_list中对应下标的client列表
- *这是使用线程IO时每个线程将服务的客户端列表。我们派生io_threads_num-1线程，因为其中一个是主线程本身。
+ * 这是使用线程IO时每个线程将服务的客户端列表。
+ * 我们派生io_threads_num-1线程，因为其中一个是主线程本身。
  * This is the list of clients each thread will serve when threaded I/O is
  * used. We spawn io_threads_num-1 threads, since one is the main thread
  * itself. */
@@ -4264,17 +4265,21 @@ void startThreadedIO(void) {
     serverAssert(server.io_threads_active == 0);
     for (int j = 1; j < server.io_threads_num; j++)
         pthread_mutex_unlock(&io_threads_mutex[j]);// 释放所有IO线程的锁
+        //设置为激活状态
     server.io_threads_active = 1;// 设置io_threads_active为1，表示IO线程已经可用
 }
-
+/*
+ * 停止所有IO线程
+ */
 void stopThreadedIO(void) {
-    /* We may have still clients with pending reads when this function
+    /*当调用此函数时，我们可能仍然有客户端具有挂起的读取：在停止线程之前处理它们。
+     * We may have still clients with pending reads when this function
      * is called: handle them before stopping the threads. */
     handleClientsWithPendingReadsUsingThreads();
     serverAssert(server.io_threads_active == 1);
     for (int j = 1; j < server.io_threads_num; j++)
-        pthread_mutex_lock(&io_threads_mutex[j]);
-    server.io_threads_active = 0;
+        pthread_mutex_lock(&io_threads_mutex[j]);//主线程获取所有的IO线程的锁
+    server.io_threads_active = 0;//设置所有的IO线程为未激活
 }
 
 /* This function checks if there are not enough pending clients to justify
@@ -4358,7 +4363,8 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     }
 
     /* 通过设置启动条件原子变量，为等待线程提供启动条件。
-     * 步骤4、设置io_threads_op全局标识为 IO_THREADS_OP_WRITE
+     * 步骤4、设置io_threads_op全局标识为 IO_THREADS_OP_WRITE,
+     * 即IO线程现在为写状态
      * Give the start condition to the waiting threads, by setting the
      * start condition atomic var. */
     io_threads_op = IO_THREADS_OP_WRITE;
@@ -4386,7 +4392,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
             pending += getIOPendingCount(j);
         if (pending == 0) break;
     }
-
+    //设置全局的IO线程为空闲状态
     io_threads_op = IO_THREADS_OP_IDLE;
 
     /*  步骤7、重新逐个检查一下server.clients_pending_write队列中的client，

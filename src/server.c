@@ -1651,7 +1651,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
      * processUnblockedClients(), so if there are multiple pipelined WAITs
      * and the just unblocked WAIT gets blocked again, we don't have to wait
      * a server cron cycle in absence of other event loop events. See #6623.
-     * 
+     *
      * We also don't send the ACKs while clients are paused, since it can
      * increment the replication backlog, they'll be sent after the pause
      * if we are still the master. */
@@ -1662,7 +1662,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
 
     /* 我们可能收到了客户关于其当前偏移量的更新。注意：在收到ACK的情况下无法执行此操作，因为故障切换将断开我们的客户端。
      * We may have received updates from clients about their current offset. NOTE:
-     * this can't be done where the ACK is received since failover will disconnect 
+     * this can't be done where the ACK is received since failover will disconnect
      * our clients. */
     updateFailoverStatus();
 
@@ -1713,7 +1713,8 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     /* Do NOT add anything below moduleReleaseGIL !!! */
 }
 
-/* This function is called immediately after the event loop multiplexing
+/* 该函数在事件循环复用API返回后立即调用，控件将很快通过调用不同的事件回调返回到Redis。
+ * This function is called immediately after the event loop multiplexing
  * API returned, and the control is going to soon return to Redis by invoking
  * the different events callbacks. */
 void afterSleep(struct aeEventLoop *eventLoop) {

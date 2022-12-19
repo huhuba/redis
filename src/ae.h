@@ -129,9 +129,9 @@ typedef struct aeEventLoop {
     // Redis在不同平台会使用4种不同的I/O多路复用模型（evport、epoll、kueue、select），
     // apidata字段是对这四种模型的进一步封装，指向aeApiState一个实例
     void *apidata; /* 用于轮询API特定数据.This is used for polling API specific data */
-    // Redis主线程阻塞等待网络事件时，会在阻塞之前调用beforesleep函数，
-    // 在被唤醒之后调用aftersleep函数
+    // Redis主线程阻塞等待网络事件时，会在阻塞之前(拉取新的事件前)调用beforesleep函数，
     aeBeforeSleepProc *beforesleep;
+    // 在被唤醒之后调用aftersleep函数
     aeBeforeSleepProc *aftersleep;
     int flags;
 } aeEventLoop;
