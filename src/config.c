@@ -2552,7 +2552,8 @@ int updateRequirePass(const char **err) {
     return 1;
 }
 
-/* applyBind affects both TCP and TLS (if enabled) together */
+/* applyBind同时影响TCP和TLS（如果启用）
+ * applyBind affects both TCP and TLS (if enabled) together */
 static int applyBind(const char **err) {
     connListener *tcp_listener = listenerByType(CONN_TYPE_SOCKET);
     connListener *tls_listener = listenerByType(CONN_TYPE_TLS);
