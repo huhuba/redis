@@ -104,12 +104,14 @@ typedef struct ConnectionType {
     int (*accept)(struct connection *conn, ConnectionCallbackFunc accept_handler);
 
     /* IO
-     * 封装了从连接读取数据，以及向连接中写入数据的函数。
+     * 向连接中写入数据
+     * */
+    int (*write)(struct connection *conn, const void *data, size_t data_len);
+    /*
      * 这里的writev函数底层调用了Linux的writev()，
      * 可以一次向Socket写入多块连续不同的buffer空间，
      * 可以减少系统调用的次数
-     * */
-    int (*write)(struct connection *conn, const void *data, size_t data_len);
+     */
     int (*writev)(struct connection *conn, const struct iovec *iov, int iovcnt);
     int (*read)(struct connection *conn, void *buf, size_t buf_len);
     // 用于设置connection中的读写回调函数，也就是write_handler、read_handler函数

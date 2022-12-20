@@ -1801,7 +1801,8 @@ client *lookupClientByID(uint64_t id) {
     return (c == raxNotFound) ? NULL : c;
 }
 
-/* This function should be called from _writeToClient when the reply list is not empty,
+/* 可以将分散的缓冲区一起批量发送
+ * This function should be called from _writeToClient when the reply list is not empty,
  * it gathers the scattered buffers from reply list and sends them away with connWritev.
  * If we write successfully, it returns C_OK, otherwise, C_ERR is returned,
  * and 'nwritten' is an output parameter, it means how many bytes server write
@@ -4144,7 +4145,7 @@ void *IOThreadMain(void *myid) {
      * 在pthread_create()函数传入的第四个参数，也就是IO线程编号
      * The ID is the thread number (from 0 to server.iothreads_num-1), and is
      * used by the thread to just manipulate a single sub-array of clients. */
-    long id = (unsigned long)myid;
+    long id = (unsigned long)myid;//当前线程的id
     char thdname[16];
 
     snprintf(thdname, sizeof(thdname), "io_thd_%ld", id);
@@ -4153,7 +4154,8 @@ void *IOThreadMain(void *myid) {
     makeThreadKillable();
 
     while(1) {// 死循环，持续处理事件
-        /* Wait for start */
+        /* 循环一百W次
+         * Wait for start */
         for (int j = 0; j < 1000000; j++) {
             //直到该id的IO线程有待处理事件时，跳出死循环，继续往下走。
             if (getIOPendingCount(id) != 0) break;
@@ -4176,7 +4178,7 @@ void *IOThreadMain(void *myid) {
          * before we drop the pending count to 0. */
         listIter li;
         listNode *ln;
-        listRewind(io_threads_list[id],&li);
+        listRewind(io_threads_list[id],&li);//取出当前线程的待处理client列表
         // 迭代当前IO线程在io_threads_list数组中对应的client列表，
         // 并根据其io_threads_op这个全局变量调用相应的函数处理可读或可写事件
         while((ln = listNext(&li))) {//返回io_threads_list中的元素(可以理解为二维数组中的一维数组的元素，即某个线程待处理的clients集合)
@@ -4448,7 +4450,7 @@ int postponeClientRead(client *c) {
         // 等待I/O线程去处理
         listAddNodeHead(server.clients_pending_read,c);
         // 记录当前client在clients_pending_read列表中关联的节点，要是client的空间被释放，
-        // 也需要把这个节点的空间释放掉
+        // 也需要把这个节点的空间释放掉(与 clients_pending_read互为‘反向索引’)
         c->pending_read_list_node = listFirst(server.clients_pending_read);
         return 1;
     } else {

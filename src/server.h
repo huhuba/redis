@@ -1219,7 +1219,7 @@ typedef struct client {
     sds sockname;           /* Cached connection target address. */
     listNode *client_list_node; /* list node in client list */
     listNode *postponed_list_node; /* list node within the postponed list */
-    listNode *pending_read_list_node; /* list node in clients pending read list */
+    listNode *pending_read_list_node; /*客户端挂起读取列表中的列表节点(与clients_pending_read护卫反向索引？) list node in clients pending read list */
     RedisModuleUserChangedFunc auth_callback; /* Module callback to execute
                                                * when the authenticated user
                                                * changes. */
@@ -1591,8 +1591,8 @@ struct redisServer {
     connListener clistener;     /* Cluster bus listener */
     list *clients;              /* 连接到当前redis实例的客户端列表. List of active clients */
     list *clients_to_close;     /* Clients to close asynchronously */
-    list *clients_pending_write; /*需要写入或安装处理程序缓冲区，可以理解为集合。 There is to write or install handler. */
-    list *clients_pending_read;  /*所有客户端挂起的读取套接字缓冲区，可以理解为集合. Client has pending read socket buffers. */
+    list *clients_pending_write; /* 需要写入或安装处理程序缓冲区，可以理解为链表。 There is to write or install handler. */
+    list *clients_pending_read;  /* 所有客户端挂起的读取套接字缓冲区，可以理解为链表. Client has pending read socket buffers. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client;     /* Current client executing the command. */
 
