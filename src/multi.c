@@ -56,7 +56,8 @@ void freeClientMultiState(client *c) {
     zfree(c->mstate.commands);
 }
 
-/* Add a new command into the MULTI commands queue */
+/* 将新命令添加到MULTI命令队列
+ * Add a new command into the MULTI commands queue */
 void queueMultiCommand(client *c, uint64_t cmd_flags) {
     multiCmd *mc;
 
@@ -87,7 +88,8 @@ void queueMultiCommand(client *c, uint64_t cmd_flags) {
     c->mstate.cmd_inv_flags |= ~cmd_flags;
     c->mstate.argv_len_sums += c->argv_len_sum + sizeof(robj*)*c->argc;
 
-    /* Reset the client's args since we copied them into the mstate and shouldn't
+    /* 重置客户端的参数，因为我们将它们复制到mstate中，不应该再从c引用它们。
+     * Reset the client's args since we copied them into the mstate and shouldn't
      * reference them from c anymore. */
     c->argv = NULL;
     c->argc = 0;

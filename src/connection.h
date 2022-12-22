@@ -141,7 +141,7 @@ struct connection {
     short int flags;// 标识符
     short int refs;// 当前连接被引用的次数
     int last_errno;// 最后一次发生的错误码
-    void *private_data;    // 当前连接关联的信息，该字段指向客户端对应的client实例
+    void *private_data;    // 当前连接关联的信息，该字段指向客户端对应的clients实例
     // 下面是该连接在connect、read、write截断的回调函数，其实，aeFileEvent中的
     // rfileProc、wfileProc两个字段指向的就是read_handler、write_handler这两个函数
     ConnectionCallbackFunc conn_handler;
@@ -393,7 +393,8 @@ static inline int connHasReadHandler(connection *conn) {
     return conn->read_handler != NULL;
 }
 
-/* Associate a private data pointer with the connection */
+/* 将专用数据指针与连接相关联
+ * Associate a private data pointer with the connection */
 static inline void connSetPrivateData(connection *conn, void *data) {
     conn->private_data = data;
 }

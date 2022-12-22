@@ -226,7 +226,10 @@ client *createClient(connection *conn) {
 
 void installClientWriteHandler(client *c) {
     int ae_barrier = 0;
-    /* For the fsync=always policy, we want that a given FD is never
+    /* 对于fsync=always策略，我们希望给定的FD永远不会在同一个事件循环迭代中用于读写，
+     * 因此在接收查询并将其提供给客户端的过程中，我们将调用beforeSleep（），
+     * 它将对磁盘执行AOF的实际fsync。写屏障确保了这一点
+     * For the fsync=always policy, we want that a given FD is never
      * served for reading and writing in the same event loop iteration,
      * so that in the middle of receiving the query, and serving it
      * to the client, we'll call beforeSleep() that will do the
@@ -316,7 +319,7 @@ int prepareClientToWrite(client *c) {
      * done by handleClientsWithPendingReadsUsingThreads() upon return.
      */
     if (!clientHasPendingReplies(c) && io_threads_op == IO_THREADS_OP_IDLE)
-        //clientHasPendingReplies()是检查buf和reply是否已经数据，如果有，就返回true
+        // clientHasPendingReplies()是检查buf和reply是否已经数据，如果有，就返回true
         putClientInPendingWriteQueue(c);
 
     /* Authorize the caller to queue in the output buffer of this client. */
@@ -930,8 +933,8 @@ void addReplyHumanLongDouble(client *c, long double d) {
     }
 }
 
-/* Add a long long as integer reply or bulk len / multi bulk count.
- * Basically this is used to output <prefix><long long><crlf>. */
+/* add a long long as integer reply or bulk len / multi bulk count.
+ * basically this is used to output <prefix><long long><crlf>. */
 void addReplyLongLongWithPrefix(client *c, long long ll, char prefix) {
     char buf[128];
     int len;
@@ -1030,7 +1033,7 @@ void addReplyNullArray(client *c) {
 }
 
 /* 创建批量答复的长度前缀，例如：$2234
- * Create the length prefix of a bulk reply, example: $2234 */
+ * * Create the length prefix of a bulk reply, example: $2234 */
 void addReplyBulkLen(client *c, robj *obj) {
     size_t len = stringObjectLen(obj);// 计算字符串长度
 
@@ -1042,14 +1045,14 @@ void addReplyBulkLen(client *c, robj *obj) {
 void addReplyBulk(client *c, robj *obj) {
     addReplyBulkLen(c,obj);
     addReply(c,obj);
-    addReplyProto(c,"\r\n",2);
+    addReplyProto(c,"\r\n",2);//写入结尾
 }
 
 /* Add a C buffer as bulk reply */
 void addReplyBulkCBuffer(client *c, const void *p, size_t len) {
     addReplyLongLongWithPrefix(c,len,'$');
     addReplyProto(c,p,len);
-    addReplyProto(c,"\r\n",2);
+    addReplyProto(c,"\r\n",2);//写入结尾
 }
 
 /* Add sds to reply (takes ownership of sds and frees it) */
@@ -1218,7 +1221,8 @@ void copyReplicaOutputBuffer(client *dst, client *src) {
     ((replBufBlock *)listNodeValue(dst->ref_repl_buf_node))->refcount++;
 }
 
-/* Return true if the specified client has pending reply buffers to write to
+/* 如果指定的客户端具有要写入套接字的挂起应答缓冲区，则返回true。
+ * Return true if the specified client has pending reply buffers to write to
  * the socket. */
 int clientHasPendingReplies(client *c) {
     if (getClientType(c) == CLIENT_TYPE_SLAVE) {
@@ -2047,6 +2051,7 @@ void sendReplyToClient(connection *conn) {
 int handleClientsWithPendingWrites(void) {
     listIter li;
     listNode *ln;
+    //获取挂起客户端写队列的长度
     int processed = listLength(server.clients_pending_write);
 
     listRewind(server.clients_pending_write,&li);
@@ -2065,7 +2070,8 @@ int handleClientsWithPendingWrites(void) {
         /* Try to write buffers to the client socket. */
         if (writeToClient(c,0) == C_ERR) continue;
 
-        /* If after the synchronous writes above we still have data to
+        /* 如果在上述同步写入之后，我们仍有数据要输出到客户端，则需要installClientWriteHandler。
+         * If after the synchronous writes above we still have data to
          * output to the client, we need to install the writable handler. */
         if (clientHasPendingReplies(c)) {
             installClientWriteHandler(c);
@@ -2443,7 +2449,11 @@ int processMultibulkBuffer(client *c) {
     return C_ERR;
 }
 
-/* Perform necessary tasks after a command was executed:
+/* 执行命令后执行必要的任务：
+ * 1.除非有理由避免执行，否则将重置客户端。
+ * 2.在主客户端的情况下，更新复制偏移量。
+ * 3.将我们从主机获得的命令传播到生产线的副本。
+ * Perform necessary tasks after a command was executed:
  *
  * 1. The client is reset unless there are reasons to avoid doing it.
  * 2. In the case of master clients, the replication offset is updated.
@@ -2466,7 +2476,10 @@ void commandProcessed(client *c) {
         c->reploff = c->read_reploff - sdslen(c->querybuf) + c->qb_pos;
     }
 
-    /* If the client is a master we need to compute the difference
+    /* 如果客户端是主机，我们需要计算处理缓冲区之前和之后应用的偏移量之间的差异，
+     * 以了解有多少复制流实际应用于主机状态：此数量及其复制流的相应部分将传播到子副本和复制积压。
+     *
+     * If the client is a master we need to compute the difference
      * between the applied offset before and after processing the buffer,
      * to understand how much of the replication stream was actually
      * applied to the master state: this quantity, and its corresponding
@@ -2570,17 +2583,24 @@ int processInputBuffer(client *c) {
          * Immediately abort if the client is in the middle of something. */
         if (c->flags & CLIENT_BLOCKED) break;
 
-        /* Don't process more buffers from clients that have already pending
+        /* 不要处理来自已在c->argv中执行挂起命令的客户端的更多缓冲区。
+         * Don't process more buffers from clients that have already pending
          * commands to execute in c->argv. */
         if (c->flags & CLIENT_PENDING_COMMAND) break;
 
-        /* Don't process input from the master while there is a busy script
+        /* 当从属服务器上的脚本处于繁忙状态时，不要处理来自主服务器的输入。
+         * 我们只想积累复制流（而不是像其他客户机那样回复-忙），然后再继续处理。
+         * Don't process input from the master while there is a busy script
          * condition on the slave. We want just to accumulate the replication
          * stream (instead of replying -BUSY like we do with other clients) and
          * later resume the processing. */
         if (isInsideYieldingLongCommand() && c->flags & CLIENT_MASTER) break;
 
-        /* CLIENT_CLOSE_AFTER_REPLY closes the connection once the reply is
+        /* CLIENT_CLOSE_AFTER_REPLY在将回复写入客户端后关闭连接。
+         * 在设置此标志后，确保不要让回复增长（即不要处理更多命令）。
+         * 这同样适用于我们希望尽快终止的客户。
+         *
+         * CLIENT_CLOSE_AFTER_REPLY closes the connection once the reply is
          * written to the client. Make sure to not let the reply grow after
          * this flag has been set (i.e. don't process more commands).
          *
@@ -2597,8 +2617,10 @@ int processInputBuffer(client *c) {
         }
         // 不同协议类型走不同的命令解析函数
         if (c->reqtype == PROTO_REQ_INLINE) {
+            //内联命令处理
             if (processInlineBuffer(c) != C_OK) break;
         } else if (c->reqtype == PROTO_REQ_MULTIBULK) {
+            //大批量命令处理
             if (processMultibulkBuffer(c) != C_OK) break;
         } else {// 未知请求类型，输出日志并结束进程
             serverPanic("Unknown request type");
@@ -2658,7 +2680,9 @@ int processInputBuffer(client *c) {
         c->qb_pos = 0;// 重置qb_pos
     }
 
-    /* Update client memory usage after processing the query buffer, this is
+    /* 在处理查询缓冲区后更新客户端内存使用情况，
+     * 这在查询缓冲区很大且在上述循环期间未耗尽的情况下非常重要（因为部分发送了大命令）。
+     * Update client memory usage after processing the query buffer, this is
      * important in case the query buffer is big and wasn't drained during
      * the above loop (because of partially sent big commands). */
     if (io_threads_op == IO_THREADS_OP_IDLE)
@@ -2668,7 +2692,7 @@ int processInputBuffer(client *c) {
 }
 
 void readQueryFromClient(connection *conn) {
-    client *c = connGetPrivateData(conn);
+    client *c = connGetPrivateData(conn);//获取链接中clients指针
     int nread, big_arg = 0;
     size_t qblen, readlen;
 
@@ -4162,7 +4186,7 @@ void *IOThreadMain(void *myid) {
         }
 
         /* 给主线程一个停止此线程的机会。
-         * ive the main thread a chance to stop this thread. */
+         * give the main thread a chance to stop this thread. */
         if (getIOPendingCount(id) == 0) {
             // 这里会尝试获取io_threads_mutex中对应的锁，如果主线程要暂停IO线程，
             // 主线程可以获取IO线程对应的锁，从而让IO线程阻塞等待锁
@@ -4339,7 +4363,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     listIter li;
     listNode *ln;
     listRewind(server.clients_pending_write,&li);
-    int item_id = 0;
+    int item_id = 0;//主线程的线程编号为0
     while((ln = listNext(&li))) {// 步骤3、分配写回任务
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
@@ -4361,7 +4385,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
             continue;
         }
 
-        int target_id = item_id % server.io_threads_num;// 计算目标IO线程的编号
+        int target_id = item_id % server.io_threads_num;// 计算目标线程(IO线程加主线程)的编号
         listAddNodeTail(io_threads_list[target_id],c);// 将client添加到各个IO线程关联的io_threads_list队列中
         item_id++;
     }
@@ -4409,10 +4433,12 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
 
-        /* Update the client in the mem usage after we're done processing it in the io-threads */
+        /* 在io线程中完成处理后，在mem使用中更新客户端
+         * Update the client in the mem usage after we're done processing it in the io-threads */
         updateClientMemUsageAndBucket(c);
 
-        /* Install the write handler if there are pending writes in some
+        /* 如果某些客户端中存在挂起的写入
+         * Install the write handler if there are pending writes in some
          * of the clients. */
         if (clientHasPendingReplies(c)) {
             installClientWriteHandler(c);

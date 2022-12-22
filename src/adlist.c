@@ -81,7 +81,8 @@ void listRelease(list *list)
     zfree(list);
 }
 
-/* Add a new node to the list, to head, containing the specified 'value'
+/* 将一个新节点添加到列表的头部，其中包含指定的“value”指针作为值。出现错误时，返回NULL，不执行任何操作（即列表保持不变）。成功后，将返回传递给函数的“列表”指针。
+ * Add a new node to the list, to head, containing the specified 'value'
  * pointer as value.
  *
  * On error, NULL is returned and no operation is performed (i.e. the

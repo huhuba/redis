@@ -1926,7 +1926,9 @@ void freeServerClientMemUsageBuckets() {
     zfree(server.client_mem_usage_buckets);
     server.client_mem_usage_buckets = NULL;
 }
-
+/**
+ * 初始化服务配置
+ */
 void initServerConfig(void) {
     int j;
     char *default_bindaddr[CONFIG_DEFAULT_BINDADDR_COUNT] = CONFIG_DEFAULT_BINDADDR;
@@ -2989,7 +2991,8 @@ int populateCommandStructure(struct redisCommand *c) {
 
 extern struct redisCommand redisCommandTable[];
 
-/* Populates the Redis Command Table dict from the static table in commands.c
+/* 从commands.c中的静态表填充Redis命令表dict，该表是从commands文件夹中的json文件自动生成的。
+ * Populates the Redis Command Table dict from the static table in commands.c
  * which is auto generated from the json files in the commands folder. */
 void populateCommandTable(void) {
     int j;
@@ -3091,7 +3094,13 @@ struct redisCommand *lookupSubcommand(struct redisCommand *container, sds sub_na
     return dictFetchValue(container->subcommands_dict, sub_name);
 }
 
-/* Look up a command by argv and argc
+/* 通过argv和argc查找命令如果“strict”不是0，
+ * 我们希望argc是精确的（即，子命令argc==2，顶级命令argc==1）
+ * 每次我们要查找命令名（例如，在command INFO中）
+ * 而不是查找用户请求执行的命令（在processCommand中）时，
+ * 都应该使用“strict”。
+ *
+ * Look up a command by argv and argc
  *
  * If `strict` is not 0 we expect argc to be exact (i.e. argc==2
  * for a subcommand and argc==1 for a top-level command)
@@ -3468,7 +3477,7 @@ void call(client *c, int flags) {
     monotime monotonic_start = 0;
     if (monotonicGetType() == MONOTONIC_CLOCK_HW)
         monotonic_start = getMonotonicUs();
-
+    //执行命令
     c->cmd->proc(c);
     server.in_nested_call--;
 

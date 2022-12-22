@@ -1149,7 +1149,7 @@ typedef struct client {
     // 这里的argc字段记录了解析后Redis命令的参数个数(包括命令名称本身)，argv
     // 字段指向的robj*数组用来存储解析后的命令参数(以字符串类型存储)
     int argc;               /* 当前命令的参数数量.Num of arguments of current command. */
-    robj **argv;            /* 当前命令的内容 。Arguments of current command. */
+    robj **argv;            /* 当前命令的名称 。Arguments of current command. */
     int argv_len;           /* argv数组的大小（可能大于argc）。Size of argv array (may be more than argc) */
     int original_argc;      /* 如果参数被重写，则为原始命令的参数数量。 Num of arguments of original command if arguments were rewritten. */
     robj **original_argv;   /*如果参数被重写，则返回原始命令的内容。 Arguments of original command if arguments were rewritten. */
