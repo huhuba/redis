@@ -158,12 +158,16 @@ void execCommand(client *c) {
         return;
     }
 
-    /* EXEC with expired watched key is disallowed*/
-    if (isWatchedKeyExpired(c)) {
+    /* 不允许使用过期的key执行
+     * EXEC with expired watched key is disallowed*/
+    if (isWatchedKeyExpired(c)) {// 1、检查一下被 WATCH 命令监听的 Key，要保证这些 Key 未过期，也没有被其他客户端修改过，才能正常提交事务
         c->flags |= (CLIENT_DIRTY_CAS);
     }
 
-    /* Check if we need to abort the EXEC because:
+    /* CLIENT_DIRTY_CAS用来标识Key被修改改过，CLIENT_DIRTY_EXEC用来标识命令入队失败。
+     2、检查事务所有命令入队的过程中，有没有发生过异常，只有全部命令都没有发生异常，才能正常提交事务
+     *
+     * Check if we need to abort the EXEC because:
      * 1) Some WATCHed key was touched.
      * 2) There was a previous error while queueing commands.
      * A failed EXEC in the first case returns a multi bulk nil object
@@ -175,7 +179,7 @@ void execCommand(client *c) {
         } else {
             addReply(c, shared.nullarray[c->resp]);
         }
-
+        // 3、上面两方面的检查，有任意一项没通过，都会调用 discardTransaction()函数回滚当前事
         discardTransaction(c);
         return;
     }
@@ -185,8 +189,9 @@ void execCommand(client *c) {
     /* we do not want to allow blocking commands inside multi */
     c->flags |= CLIENT_DENY_BLOCKING;
 
-    /* Exec all the queued commands */
-    unwatchAllKeys(c); /* Unwatch ASAP otherwise we'll waste CPU cycles */
+    /* 取消对Key的监听
+     * Exec all the queued commands */
+    unwatchAllKeys(c); /* 尽快解除监视，否则我们将浪费CPU周期。 Unwatch ASAP otherwise we'll waste CPU cycles */
 
     server.in_exec = 1;
 
@@ -195,8 +200,9 @@ void execCommand(client *c) {
     orig_argc = c->argc;
     orig_cmd = c->cmd;
     addReplyArrayLen(c,c->mstate.count);
+    // 4、通过上述所有的检查之后，开始正式执行事务
     for (j = 0; j < c->mstate.count; j++) {
-        c->argc = c->mstate.commands[j].argc;
+        c->argc = c->mstate.commands[j].argc;// 更新当前client执行的命令信息
         c->argv = c->mstate.commands[j].argv;
         c->argv_len = c->mstate.commands[j].argv_len;
         c->cmd = c->realcmd = c->mstate.commands[j].cmd;
@@ -204,8 +210,8 @@ void execCommand(client *c) {
         /* ACL permissions are also checked at the time of execution in case
          * they were changed after the commands were queued. */
         int acl_errpos;
-        int acl_retval = ACLCheckAllPerm(c,&acl_errpos);
-        if (acl_retval != ACL_OK) {
+        int acl_retval = ACLCheckAllPerm(c,&acl_errpos);// 进行ACL检查
+        if (acl_retval != ACL_OK) {// 如果ACL检查没过，会执行该分支，返回给客户端对应的提示信息
             char *reason;
             switch (acl_retval) {
             case ACL_DENIED_CMD:
@@ -228,7 +234,7 @@ void execCommand(client *c) {
                 "transaction was accumulated and the EXEC call. "
                 "This command is no longer allowed for the "
                 "following reason: %s", reason);
-        } else {
+        } else { // 执行命令
             if (c->id == CLIENT_ID_AOF)
                 call(c,CMD_CALL_NONE);
             else
@@ -237,7 +243,9 @@ void execCommand(client *c) {
             serverAssert((c->flags & CLIENT_BLOCKED) == 0);
         }
 
-        /* Commands may alter argc/argv, restore mstate. */
+        /* 命令可能修改命令参数，这里会写回到mstate队列中
+         * 命令可以改变argc/argv，恢复mstate。
+         * Commands may alter argc/argv, restore mstate. */
         c->mstate.commands[j].argc = c->argc;
         c->mstate.commands[j].argv = c->argv;
         c->mstate.commands[j].argv_len = c->argv_len;
@@ -275,10 +283,10 @@ void execCommand(client *c) {
  * This is done to avoid the need for listSearchKey and dictFind when we remove from the list. */
 typedef struct watchedKey {
     listNode node;
-    robj *key;
-    redisDb *db;
+    robj *key;// WATCH命令监听的Key
+    redisDb *db;// 被监听的Key所在的DB
     client *client;
-    unsigned expired:1; /* Flag that we're watching an already expired key. */
+    unsigned expired:1; /* 标记我们正在监视已过期的key。 Flag that we're watching an already expired key. */
 } watchedKey;
 
 /* Attach a watchedKey to the list of clients watching that key. */
@@ -357,7 +365,8 @@ void unwatchAllKeys(client *c) {
     }
 }
 
-/* Iterates over the watched_keys list and looks for an expired key. Keys which
+/* 遍历watched_keys列表并查找过期的key。调用WATCH时已过期的key将被忽略。
+ * Iterates over the watched_keys list and looks for an expired key. Keys which
  * were expired already when WATCH was called are ignored. */
 int isWatchedKeyExpired(client *c) {
     listIter li;

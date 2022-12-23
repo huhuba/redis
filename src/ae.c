@@ -318,7 +318,9 @@ static int processTimeEvents(aeEventLoop *eventLoop) {
             continue;
         }
 
-        /* Make sure we don't process time events created by time events in
+        /* 确保我们不处理此迭代中时间事件创建的时间事件。
+         * 注意，这个检查目前是无用的：我们总是在头部添加新的计时器，但是如果我们更改实现细节，这个检查可能会再次有用：我们将其保留在这里以备将来防御。
+         * Make sure we don't process time events created by time events in
          * this iteration. Note that this check is currently useless: we always
          * add new timers on the head, however if we change the implementation
          * detail, this check may be useful again: we keep it here for future

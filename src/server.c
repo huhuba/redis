@@ -1221,12 +1221,14 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(id);
     UNUSED(clientData);
 
-    /* Software watchdog: deliver the SIGALRM that will reach the signal
+    /* 软件看门狗：如果我们没有足够快地返回到这里，则提供SIGALRM，该SIGALRM将到达信号处理器。
+     * Software watchdog: deliver the SIGALRM that will reach the signal
      * handler if we don't return here fast enough. */
     if (server.watchdog_period) watchdogScheduleSignal(server.watchdog_period);
 
     server.hz = server.config_hz;
-    /* Adapt the server.hz value to the number of configured clients. If we have
+    /* 使server.hz值与配置的客户端数量相适应。如果我们有很多客户端，我们希望以更高的频率调用serverCron（）。
+     * Adapt the server.hz value to the number of configured clients. If we have
      * many clients, we want to call serverCron() with an higher frequency. */
     if (server.dynamic_hz) {
         while (listLength(server.clients) / server.hz >
@@ -1240,9 +1242,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     }
 
-    /* for debug purposes: skip actual cron work if pause_cron is on */
+    /* 出于调试目的：如果pausecron打开，则跳过实际cron工作
+     * for debug purposes: skip actual cron work if pause_cron is on */
     if (server.pause_cron) return 1000/server.hz;
-
+    //被 run_with_period 这个宏包裹的代码是个例外，它可以指定自己的触发频率。
     run_with_period(100) {
         long long stat_net_input_bytes, stat_net_output_bytes;
         long long stat_net_repl_input_bytes, stat_net_repl_output_bytes;
@@ -1262,7 +1265,11 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
                                  stat_net_repl_output_bytes);
     }
 
-    /* We have just LRU_BITS bits per object for LRU information.
+    /* 对于LRU信息，每个对象只有LRU_BITS位。因此，我们使用（最终包装）LRU时钟。
+     * 请注意，即使计数器包装起来也不是什么大问题，但一切都会正常工作，但某些对象对Redis来说会显得更年轻。
+     * 然而，为了实现这一点，在计数器包装所需的所有时间内都不应该触摸给定对象，这是不可能的。
+     * 请注意，您可以更改LRU_CLOCK_resolution定义的分辨率。
+     * We have just LRU_BITS bits per object for LRU information.
      * So we use an (eventually wrapping) LRU clock.
      *
      * Note that even if the counter wraps it's not a big problem,
@@ -1278,7 +1285,8 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     cronUpdateMemoryStats();
 
-    /* We received a SIGTERM or SIGINT, shutting down here in a safe way, as it is
+    /* 我们收到一个SIGTERM或SIGINT，在这里以安全的方式关闭，因为在信号处理程序中这样做是不正常的。
+     * We received a SIGTERM or SIGINT, shutting down here in a safe way, as it is
      * not ok doing so inside the signal handler. */
     if (server.shutdown_asap && !isShutdownInitiated()) {
         int shutdownFlags = SHUTDOWN_NOFLAGS;
@@ -1291,11 +1299,13 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     } else if (isShutdownInitiated()) {
         if (server.mstime >= server.shutdown_mstime || isReadyToShutdown()) {
             if (finishShutdown() == C_OK) exit(0);
-            /* Shutdown failed. Continue running. An error has been logged. */
+            /* 关闭失败。继续运行。已记录错误。
+             * Shutdown failed. Continue running. An error has been logged. */
         }
     }
 
-    /* Show some info about non-empty databases */
+    /* 显示有关非空数据库的一些信息
+     * Show some info about non-empty databases */
     if (server.verbosity <= LL_VERBOSE) {
         run_with_period(5000) {
             for (j = 0; j < server.dbnum; j++) {
@@ -1311,7 +1321,8 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     }
 
-    /* Show information about connected clients */
+    /* 显示有关已连接客户端的信息
+     * Show information about connected clients */
     if (!server.sentinel_mode) {
         run_with_period(5000) {
             serverLog(LL_DEBUG,
@@ -3468,7 +3479,8 @@ void call(client *c, int flags) {
 
     const long long call_timer = ustime();
 
-    /* Update cache time, in case we have nested calls we want to
+    /* 更新缓存时间，如果我们有嵌套调用，我们只想在第一次调用时更新
+     * Update cache time, in case we have nested calls we want to
      * update only on the first call*/
     if (server.in_nested_call++ == 0) {
         updateCachedTimeWithUs(0,call_timer);
@@ -3924,6 +3936,8 @@ int processCommand(client *c) {
      * condition, to avoid mixing the propagation of scripts with the
      * propagation of DELs due to eviction. */
     if (server.maxmemory && !isInsideYieldingLongCommand()) {
+        // performEvictions()函数是内存淘汰的入口，当它无法淘汰任何Key的时候，
+        // 会返回EVICT_FAIL，此时就表示Redis内存已满.EVICT_FAIL:逐出失败
         int out_of_memory = (performEvictions() == EVICT_FAIL);
 
         /* performEvictions may evict keys, so we need flush pending tracking
@@ -3935,9 +3949,15 @@ int processCommand(client *c) {
         /* performEvictions may flush slave output buffers. This may result
          * in a slave, that may be the active client, to be freed. */
         if (server.current_client == NULL) return C_ERR;
-
+        // is_denyoom_command是命令的flags字段中是否包含CMD_DENYOOM标志位，
+        // 我们前面介绍redisCommand时知道其中有个flag字段，记录了该命令的一些特性，
+        // 其中CMD_DENYOOM表示命令可能会导致Redis内存使用率增加，在内存满了之后，
+        // 就无法再执行这条命令了。这类命令多是写命令，例如SET命令
         int reject_cmd_on_oom = is_denyoom_command;
-        /* If client is in MULTI/EXEC context, queuing may consume an unlimited
+        // 另外，client通过事务执行多条命令时（CLIENT_MULTI标志位）也必须保证内存充裕
+        /* 若客户机在MULTI/EXEC上下文中，排队可能会消耗无限量的内存，所以我们希望停止这种情况。
+         * 然而，我们永远不想拒绝DISCARD，甚至拒绝EXEC（除非它包含被拒绝的命令，在这种情况下is_denyoom_command已经被设置）。
+         * If client is in MULTI/EXEC context, queuing may consume an unlimited
          * amount of memory, so we want to stop that.
          * However, we never want to reject DISCARD, or even EXEC (unless it
          * contains denied commands, in which case is_denyoom_command is already
@@ -3949,7 +3969,7 @@ int processCommand(client *c) {
             c->cmd->proc != resetCommand) {
             reject_cmd_on_oom = 1;
         }
-
+        // 如果当前Redis内存已经达到，且无法淘汰数据，就无法执行CMD_DENYOOM类型的命令了
         if (out_of_memory && reject_cmd_on_oom) {
             rejectCommand(c, shared.oomerr);
             return C_OK;
@@ -4104,8 +4124,10 @@ int processCommand(client *c) {
         c->cmd->proc != quitCommand &&
         c->cmd->proc != resetCommand)
     {
+        // 当前client处于事务模式，且执行的命令不是EXEC、DISCARD等结束事务的命令，
+        // 则会将命令写入到缓冲队列中
         queueMultiCommand(c, cmd_flags);// 将当前命令入队，等待后续执行
-        addReply(c,shared.queued);// 给客户端返回"+QUEUED"字符串
+        addReply(c,shared.queued);//         // 返回QUEUED表示命令已经进入缓冲队列
     } else {// 调用call()函数执行命令
         call(c,CMD_CALL_FULL);
         c->woff = server.master_repl_offset;

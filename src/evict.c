@@ -54,10 +54,11 @@
 #define EVPOOL_SIZE 16
 #define EVPOOL_CACHED_SDS_SIZE 255
 struct evictionPoolEntry {
-    unsigned long long idle;    /* Object idle time (inverse frequency for LFU) */
-    sds key;                    /* Key name. */
-    sds cached;                 /* Cached SDS object for key name. */
-    int dbid;                   /* Key DB number. */
+    // lru相关策略中的空闲时间，lfu相关策略中的频次，ttl策略中的过期时间
+    unsigned long long idle;    /* 对象空闲时间（LFU的逆频率）.Object idle time (inverse frequency for LFU) */
+    sds key;                    /*对应一个候选的Key. Key name. */
+    sds cached;                 /*用于缓存Key值. Cached SDS object for key name. */
+    int dbid;                   /*该Key所在的db编号. Key DB number. */
 };
 
 static struct evictionPoolEntry *EvictionPoolLRU;
@@ -134,7 +135,10 @@ void evictionPoolAlloc(void) {
     EvictionPoolLRU = ep;
 }
 
-/* This is a helper function for performEvictions(), it is used in order
+/* 这是performEvactions（）的一个助手函数，它用于在每次我们想要过期密钥时用几个条目填充驱逐池。
+ * 将添加空闲时间大于当前关键帧之一的关键帧。如果有空闲条目，则始终添加密钥。
+ * 我们按升序将键插入到位，所以空闲时间较小的键在左侧，空闲时间较高的键在右侧。
+ * This is a helper function for performEvictions(), it is used in order
  * to populate the evictionPool with a few entries every time we want to
  * expire a key. Keys with idle time bigger than one of the current
  * keys are added. Keys are always added if there are free entries.
@@ -297,12 +301,13 @@ unsigned long LFUTimeElapsed(unsigned long ldt) {
 /* Logarithmically increment a counter. The greater is the current counter value
  * the less likely is that it gets really incremented. Saturate it at 255. */
 uint8_t LFULogIncr(uint8_t counter) {
-    if (counter == 255) return 255;
-    double r = (double)rand()/RAND_MAX;
+    if (counter == 255) return 255;// counter已经达到255，不再增加
+    double r = (double)rand()/RAND_MAX;// 计算随机数
     double baseval = counter - LFU_INIT_VAL;
     if (baseval < 0) baseval = 0;
+    // lfu_log_factor作为分母的一部分
     double p = 1.0/(baseval*server.lfu_log_factor+1);
-    if (r < p) counter++;
+    if (r < p) counter++;// 只有p>r的时候，才能对counter进行递增
     return counter;
 }
 
@@ -317,8 +322,9 @@ uint8_t LFULogIncr(uint8_t counter) {
  * to fit: as we check for the candidate, we incrementally decrement the
  * counter of the scanned objects if needed. */
 unsigned long LFUDecrAndReturn(robj *o) {
-    unsigned long ldt = o->lru >> 8;
-    unsigned long counter = o->lru & 255;
+    unsigned long ldt = o->lru >> 8;// 获取LDT时间戳
+    unsigned long counter = o->lru & 255;// 获取counter部分值
+    // 根据lfu-decay-time配置项的值，决定counter的衰减值.
     unsigned long num_periods = server.lfu_decay_time ? LFUTimeElapsed(ldt) / server.lfu_decay_time : 0;
     if (num_periods)
         counter = (num_periods > counter) ? 0 : counter - num_periods;
@@ -397,33 +403,39 @@ size_t freeMemoryGetNotCountedMemory(void) {
 int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *level) {
     size_t mem_reported, mem_used, mem_tofree;
 
-    /* Check if we are over the memory usage limit. If we are not, no need
+    /* 检查是否超过内存使用限制。如果没有，则无需减去从属输出缓冲区。我们可以尽快返回。
+     * Check if we are over the memory usage limit. If we are not, no need
      * to subtract the slaves output buffers. We can just return ASAP. */
     mem_reported = zmalloc_used_memory();
     if (total) *total = mem_reported;
 
-    /* We may return ASAP if there is no need to compute the level. */
+    /* 如果不需要计算水位，我们可以尽快返回。
+     * We may return ASAP if there is no need to compute the level. */
     if (!server.maxmemory) {
         if (level) *level = 0;
         return C_OK;
     }
     if (mem_reported <= server.maxmemory && !level) return C_OK;
 
-    /* Remove the size of slaves output buffers and AOF buffer from the
+    /* 从已用内存计数中删除从属输出缓冲区和AOF缓冲区的大小。
+     * Remove the size of slaves output buffers and AOF buffer from the
      * count of used memory. */
     mem_used = mem_reported;
     size_t overhead = freeMemoryGetNotCountedMemory();
     mem_used = (mem_used > overhead) ? mem_used-overhead : 0;
 
-    /* Compute the ratio of memory usage. */
+    /* 计算内存使用率。
+     * Compute the ratio of memory usage. */
     if (level) *level = (float)mem_used / (float)server.maxmemory;
 
     if (mem_reported <= server.maxmemory) return C_OK;
 
-    /* Check if we are still over the memory limit. */
+    /* 检查是否仍超过内存限制。
+     * Check if we are still over the memory limit. */
     if (mem_used <= server.maxmemory) return C_OK;
 
-    /* Compute how much memory we need to free. */
+    /* 计算我们需要释放多少内存。
+     * Compute how much memory we need to free. */
     mem_tofree = mem_used - server.maxmemory;
 
     if (logical) *logical = mem_used;
@@ -493,22 +505,27 @@ static int isSafeToPerformEvictions(void) {
     return 1;
 }
 
-/* Algorithm for converting tenacity (0-100) to a time limit.  */
+/* 将韧性（0-100）转换为时间限制的算法。
+ * Algorithm for converting tenacity (0-100) to a time limit.  */
 static unsigned long evictionTimeLimitUs() {
     serverAssert(server.maxmemory_eviction_tenacity >= 0);
     serverAssert(server.maxmemory_eviction_tenacity <= 100);
 
     if (server.maxmemory_eviction_tenacity <= 10) {
-        /* A linear progression from 0..500us */
+        /* maxmemory-eviction-tenacity配置项在10以内，耗时在0~500微妙之间
+         * A linear progression from 0..500us */
         return 50uL * server.maxmemory_eviction_tenacity;
     }
 
     if (server.maxmemory_eviction_tenacity < 100) {
-        /* A 15% geometric progression, resulting in a limit of ~2 min at tenacity==99  */
+        /* maxmemory-eviction-tenacity配置项在10以上时，耗时时间按照
+         * maxmemory-eviction-tenacity配置项的15%的比例增长，不再是完全正相关，
+         * 最大值大约为2分钟
+         * A 15% geometric progression, resulting in a limit of ~2 min at tenacity==99  */
         return (unsigned long)(500.0 * pow(1.15, server.maxmemory_eviction_tenacity - 10.0));
     }
 
-    return ULONG_MAX;   /* No limit to eviction time */
+    return ULONG_MAX;   /* 无驱逐时间限制.No limit to eviction time */
 }
 
 /* Check that memory usage is within the current "maxmemory" limit.  If over
@@ -547,7 +564,7 @@ int performEvictions(void) {
     long long delta;
     int slaves = listLength(server.slaves);
     int result = EVICT_FAIL;
-
+    // 第1步、待释放的内存空间是在getMaxmemoryState()函数中计算的，它的返回值表示是否需要进行内存淘汰
     if (getMaxmemoryState(&mem_reported,NULL,&mem_tofree,NULL) == C_OK) {
         result = EVICT_OK;
         goto update_metrics;
@@ -557,7 +574,7 @@ int performEvictions(void) {
         result = EVICT_FAIL;  /* We need to free memory, but policy forbids. */
         goto update_metrics;
     }
-
+    // 第2步、evictionTimeLimitUs() 函数用来计算此次内存淘汰的超时时长
     unsigned long eviction_time_limit_us = evictionTimeLimitUs();
 
     mem_freed = 0;
@@ -587,10 +604,10 @@ int performEvictions(void) {
         redisDb *db;
         dict *dict;
         dictEntry *de;
-
+            // 第3步、优先删除 Key（也就是 bestKey）的选择
         if (server.maxmemory_policy & (MAXMEMORY_FLAG_LRU|MAXMEMORY_FLAG_LFU) ||
             server.maxmemory_policy == MAXMEMORY_VOLATILE_TTL)
-        {
+        {   // LFU和LRU策略下的选择方式，使用到了EvictionPoolLRU缓存池
             struct evictionPoolEntry *pool = EvictionPoolLRU;
 
             while (bestkey == NULL) {
@@ -604,6 +621,7 @@ int performEvictions(void) {
                     dict = (server.maxmemory_policy & MAXMEMORY_FLAG_ALLKEYS) ?
                             db->dict : db->expires;
                     if ((keys = dictSize(dict)) != 0) {
+                        // 采样填充EvictionPoolLRU缓存池的核心逻辑位于evictionPoolPopulate()函数
                         evictionPoolPopulate(i, dict, db->dict, pool);
                         total_keys += keys;
                     }
@@ -611,7 +629,7 @@ int performEvictions(void) {
                 if (!total_keys) break; /* No keys to evict. */
 
                 /* Go backward from best to worst element to evict. */
-                for (k = EVPOOL_SIZE-1; k >= 0; k--) {
+                for (k = EVPOOL_SIZE-1; k >= 0; k--) {// 查找bestKey
                     if (pool[k].key == NULL) continue;
                     bestdbid = pool[k].dbid;
 
@@ -644,7 +662,7 @@ int performEvictions(void) {
         /* volatile-random and allkeys-random policy */
         else if (server.maxmemory_policy == MAXMEMORY_ALLKEYS_RANDOM ||
                  server.maxmemory_policy == MAXMEMORY_VOLATILE_RANDOM)
-        {
+        {// 第3.2步、随机淘汰策略里面选择 bestKey 的逻辑比较简单，就是随机选择一个Key进行淘汰
             /* When evicting a random key, we try to evict a key for
              * each DB, so we use the static 'next_db' variable to
              * incrementally visit all DBs. */
@@ -678,6 +696,7 @@ int performEvictions(void) {
              * we only care about memory used by the key space. */
             delta = (long long) zmalloc_used_memory();
             latencyStartMonitor(eviction_latency);
+            // 第4步、Redis 会从 EvictionPoolLRU 这个数组尾部选取 bestKey 进行淘汰
             dbGenericDelete(db,keyobj,server.lazyfree_lazy_eviction,DB_FLAG_KEY_EVICTED);
             latencyEndMonitor(eviction_latency);
             latencyAddSampleIfNeeded("eviction-del",eviction_latency);
@@ -691,7 +710,7 @@ int performEvictions(void) {
             postExecutionUnitOperations();
             decrRefCount(keyobj);
             keys_freed++;
-
+            // 第5步、每淘汰 16 个Key，就会检查一下淘汰操作是否超时，如果发生超时，则通过 startEvictionTimeProc() 函数启动一个时间事件。
             if (keys_freed % 16 == 0) {
                 /* When the memory to free starts to be big enough, we may
                  * start spending so much time here that is impossible to
@@ -706,7 +725,8 @@ int performEvictions(void) {
                  * memory, since the "mem_freed" amount is computed only
                  * across the dbAsyncDelete() call, while the thread can
                  * release the memory all the time. */
-                if (server.lazyfree_lazy_eviction) {
+                if (server.lazyfree_lazy_eviction) {// 内存是否满足条件
+                    //第4步、Redis 会从 EvictionPoolLRU 这个数组尾部选取 bestKey 进行淘汰
                     if (getMaxmemoryState(NULL,NULL,NULL,NULL) == C_OK) {
                         break;
                     }
@@ -735,6 +755,7 @@ cant_free:
          * short wait here if such jobs exist, but don't wait long.  */
         mstime_t lazyfree_latency;
         latencyStartMonitor(lazyfree_latency);
+        // 第6步、如果经历了上述淘汰逻辑之后，淘汰了所有能淘汰的 Key，但是 Redis 内存占用量依旧超过 maxmemory 这个阈值，那么 Redis 就做最后一次努力
         while (bioPendingJobsOfType(BIO_LAZY_FREE) &&
               elapsedUs(evictionTimer) < eviction_time_limit_us) {
             if (getMaxmemoryState(NULL,NULL,NULL,NULL) == C_OK) {

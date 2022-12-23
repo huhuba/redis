@@ -873,10 +873,11 @@ struct RedisModuleDigest {
 struct redisObject {
     unsigned type:4;
     unsigned encoding:4;
-    unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
+    unsigned lru:LRU_BITS; /* LRU时间（相对于全局LRU_clock）或LFU数据（最低有效8位频率和最高有效16位访问时间）。
+                            * LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
-    int refcount;
+    int refcount;//引用数量
     void *ptr;
 };
 
@@ -981,16 +982,17 @@ typedef struct rdbLoadingCtx {
 
 /* Client MULTI/EXEC state */
 typedef struct multiCmd {
-    robj **argv;
+    robj **argv;// 命令的参数
     int argv_len;
-    int argc;
-    struct redisCommand *cmd;
+    int argc; // 命令参数个数
+    struct redisCommand *cmd;// 命令对应的redisCommand实例
 } multiCmd;
 
 typedef struct multiState {
-    multiCmd *commands;     /* Array of MULTI commands */
-    int count;              /* Total number of MULTI commands */
-    int cmd_flags;          /* The accumulated command flags OR-ed together.
+    multiCmd *commands;     /* MULTI命令数组.Array of MULTI commands */
+    int count;              /* 记录了multiCmd数组的长度.Total number of MULTI commands */
+    int cmd_flags;          /* 累积的命令标志“或”运算在一起。因此，如果至少一个命令有一个给定的标志，它将被设置在这个字段中。
+                             * The accumulated command flags OR-ed together.
                                So if at least a command has a given flag, it
                                will be set in this field. */
     int cmd_inv_flags;      /* Same as cmd_flags, OR-ing the ~flags. so that it
@@ -1207,7 +1209,7 @@ typedef struct client {
     char *slave_addr;       /* Optionally given by REPLCONF ip-address */
     int slave_capa;         /* Slave capabilities: SLAVE_CAPA_* bitwise OR. */
     int slave_req;          /* Slave requirements: SLAVE_REQ_* */
-    multiState mstate;      /* MULTI/EXEC state */
+    multiState mstate;      /* 事务命令保存的队列。 MULTI/EXEC state */
     int btype;              /* Type of blocking op if CLIENT_BLOCKED. */
     blockingState bpop;     /* blocking state */
     long long woff;         /* Last write global replication offset. */
@@ -1533,8 +1535,9 @@ struct redisServer {
     char *configfile;           /* redis.conf配置文件的绝对路径，或NULL Absolute config file path, or NULL */
     char *executable;           /* Absolute executable file path. */
     char **exec_argv;           /* Executable argv vector (copy). */
-    int dynamic_hz;             /* Change hz value depending on # of clients. */
-    int config_hz;              /* Configured HZ value. May be different than
+    int dynamic_hz;             /* 根据客户端更改hz值。Change hz value depending on # of clients. */
+    int config_hz;              /* 配置的HZ值。如果启用了动态hz，则可能与实际的“hz”字段值不同。
+                                 * Configured HZ value. May be different than
                                    the actual 'hz' field value if dynamic-hz
                                    is enabled. */
     mode_t umask;               /* The umask value of the process on startup */

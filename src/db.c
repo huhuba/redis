@@ -89,7 +89,17 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
     robj *val = NULL;
     if (de) {
         val = dictGetVal(de);
-        /* Forcing deletion of expired keys on a replica makes the replica
+        /* 下面这两行代码是针对主从模式下，只读从库的特殊处理。因为主从模式里面，过期Key
+         * 是由主库控制的，从库只能被动接受。主库发现一个Key过期之后，会发一条DEL语句给
+         * 从库，而从库在发现过期Key的时候，不用主动删除Key，而是等主库发来的DEL再删，
+         * 这样可以保持主从一致。
+         * 但是对于从库还是会检查Key是不是已经过期了，如果Key过期了，我们也是无法拿到
+         * 对应的Value值的。
+         *
+         * 强制删除副本上过期的密钥会使副本与主副本不一致。
+         * 我们禁止在只读副本上使用它，但必须允许在可写副本上使用，以使写命令行为一致。
+         * 即使在只读命令期间也可能设置WRITE标志，因为该命令可能会触发导致模块执行额外写入的事件。
+         * Forcing deletion of expired keys on a replica makes the replica
          * inconsistent with the master. We forbid it on readonly replicas, but
          * we have to allow it on writable replicas to make write commands
          * behave consistently.
@@ -103,14 +113,16 @@ robj *lookupKey(redisDb *db, robj *key, int flags) {
             expire_flags |= EXPIRE_FORCE_DELETE_EXPIRED;
         if (flags & LOOKUP_NOEXPIRE)
             expire_flags |= EXPIRE_AVOID_DELETE_EXPIRED;
-        if (expireIfNeeded(db, key, expire_flags)) {
-            /* The key is no longer valid. */
+        if (expireIfNeeded(db, key, expire_flags)) {// 惰性过期
+            /* key不再有效
+             * The key is no longer valid. */
             val = NULL;
         }
     }
 
-    if (val) {
-        /* Update the access time for the ageing algorithm.
+    if (val) {        // 根据flags标识决定是否更新lru字段
+        /*
+         * Update the access time for the ageing algorithm.
          * Don't do it if we have a saving child, as this will trigger
          * a copy on write madness. */
         if (!hasActiveChildProcess() && !(flags & LOOKUP_NOTOUCH)){
@@ -335,7 +347,8 @@ robj *dbRandomKey(redisDb *db) {
     }
 }
 
-/* Helper for sync and async delete. */
+/* 同步和异步删除的帮助程序
+ * Helper for sync and async delete. */
 int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
     dictEntry **plink;
     int table;
