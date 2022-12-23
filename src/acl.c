@@ -1741,7 +1741,11 @@ int ACLUserCheckChannelPerm(user *u, sds channel, int is_pattern) {
     return ACL_DENIED_CHANNEL;
 }
 
-/* Lower level API that checks if a specified user is able to execute a given command.
+/* 检查指定用户是否能够执行给定命令的低级API。
+ * 如果命令未通过ACL检查，则idxptr将设置为导致失败的第一个argv条目，
+ * 如果命令本身失败，则设置为0，或者设置为导致故障的keychannel的idx
+ *
+ * Lower level API that checks if a specified user is able to execute a given command.
  *
  * If the command fails an ACL check, idxptr will be to set to the first argv entry that
  * causes the failure, either 0 if the command itself fails or the idx of the key/channel
@@ -1786,7 +1790,8 @@ int ACLCheckAllUserCommandPerm(user *u, struct redisCommand *cmd, robj **argv, i
     return relevant_error;
 }
 
-/* High level API for checking if a client can execute the queued up command */
+/* 用于检查客户端是否可以执行排队命令的高级API
+ * High level API for checking if a client can execute the queued up command */
 int ACLCheckAllPerm(client *c, int *idxptr) {
     return ACLCheckAllUserCommandPerm(c->user, c->cmd, c->argv, c->argc, idxptr);
 }

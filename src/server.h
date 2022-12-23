@@ -959,7 +959,7 @@ typedef struct redisDb {
     /*
      * 与WATCH命令相关的一个dict
      */
-    dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
+    dict *watched_keys;         /* MULTI/EXEC CAS的WATCHED密钥.WATCHED keys for MULTI/EXEC CAS */
     int id;                     /* 当前redisDb实例的唯一标识. Database ID */
     long long avg_ttl;          /* 用来统计平均过期时间 Average TTL, just for stats */
     unsigned long expires_cursor; /*用来统计过期事件循环执行的次数 Cursor of the active expire cycle. */
@@ -995,11 +995,13 @@ typedef struct multiState {
                              * The accumulated command flags OR-ed together.
                                So if at least a command has a given flag, it
                                will be set in this field. */
-    int cmd_inv_flags;      /* Same as cmd_flags, OR-ing the ~flags. so that it
+    int cmd_inv_flags;      /* 与cmd_flags相同，对~标志进行OR运算。
+                             * 这样就可以知道是否所有的命令都有一个特定的标志
+                             * Same as cmd_flags, OR-ing the ~flags. so that it
                                is possible to know if all the commands have a
                                certain flag. */
-    size_t argv_len_sums;    /* mem used by all commands arguments */
-    int alloc_count;         /* total number of multiCmd struct memory reserved. */
+    size_t argv_len_sums;    /* 所有命令参数使用的mem。mem used by all commands arguments */
+    int alloc_count;         /* 保留的multiCmd结构内存总数.total number of multiCmd struct memory reserved. */
 } multiState;
 
 /* This structure holds the blocking operation state for a client.

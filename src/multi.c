@@ -31,7 +31,8 @@
 
 /* ================================ MULTI/EXEC ============================== */
 
-/* Client state initialization for MULTI/EXEC */
+/* MULTI/EXEC的客户端状态初始化
+ * Client state initialization for MULTI/EXEC */
 void initClientMultiState(client *c) {
     c->mstate.commands = NULL;
     c->mstate.count = 0;
@@ -41,7 +42,8 @@ void initClientMultiState(client *c) {
     c->mstate.alloc_count = 0;
 }
 
-/* Release all the resources associated with MULTI/EXEC state */
+/* 释放与MULTI/EXEC状态关联的所有资源
+ * Release all the resources associated with MULTI/EXEC state */
 void freeClientMultiState(client *c) {
     int j;
 
@@ -66,7 +68,7 @@ void queueMultiCommand(client *c, uint64_t cmd_flags) {
      * bother to read previous responses and didn't notice the multi was already
      * aborted. */
     if (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC))
-        return;
+        return;//被修改过则结束。
     if (c->mstate.count == 0) {
         /* If a client is using multi/exec, assuming it is used to execute at least
          * two commands. Hence, creating by default size of 2. */
@@ -104,7 +106,8 @@ void discardTransaction(client *c) {
     unwatchAllKeys(c);
 }
 
-/* Flag the transaction as DIRTY_EXEC so that EXEC will fail.
+/* 将事务标记为DIRTY_EXEC，以便EXEC失败。应在每次排队命令时出错时调用。
+ * Flag the transaction as DIRTY_EXEC so that EXEC will fail.
  * Should be called every time there is an error while queueing a command. */
 void flagTransaction(client *c) {
     if (c->flags & CLIENT_MULTI)
@@ -177,6 +180,7 @@ void execCommand(client *c) {
         if (c->flags & CLIENT_DIRTY_EXEC) {
             addReplyErrorObject(c, shared.execaborterr);
         } else {
+            // 如果被设置了CLIENT_DIRTY_CAS标记，就表示监听的Key被修改过
             addReply(c, shared.nullarray[c->resp]);
         }
         // 3、上面两方面的检查，有任意一项没通过，都会调用 discardTransaction()函数回滚当前事
@@ -306,28 +310,36 @@ static inline listNode *watchedKeyGetClientNode(watchedKey *wk) {
     return &wk->node;
 }
 
-/* Watch for the specified key */
+/* 监视指定的key
+ * Watch for the specified key */
 void watchForKey(client *c, robj *key) {
     list *clients = NULL;
     listIter li;
     listNode *ln;
     watchedKey *wk;
 
-    /* Check if we are already watching for this key */
+    /* 创建迭代当前 client 的 watched_keys 列表，查找此次要监听的目标 Key 是否已存在
+     * Check if we are already watching for this key */
     listRewind(c->watched_keys,&li);
     while((ln = listNext(&li))) {
         wk = listNodeValue(ln);
         if (wk->db == c->db && equalStringObjects(key,wk->key))
-            return; /* Key already watched */
+            return; /* 如果存在，证明已经监听了目标 Key，直接返回 Key already watched */
     }
-    /* This key is not already watched in this DB. Let's add it */
+    /* 确认监听的目标 Key 不存在时，会从 redisDb 中的 watched_keys 集合中查找目标 Key 对应的 client 列表，
+     * 然后把当前 client 添加到该列表尾部，这就建立了被监听 Key 与 client 之间的关系
+     * This key is not already watched in this DB. Let's add it */
     clients = dictFetchValue(c->db->watched_keys,key);
     if (!clients) {
         clients = listCreate();
         dictAdd(c->db->watched_keys,key,clients);
         incrRefCount(key);
     }
-    /* Add the new key to the list of keys watched by this client */
+    /*
+     * watchForKey() 函数会创建一个 watchKey 实例，
+     * 并将其添加到 client->watched_keys 列表尾部，
+     * 也就是建立了 client 到被监听 Key 之间的关系
+     * Add the new key to the list of keys watched by this client */
     wk = zmalloc(sizeof(*wk));
     wk->key = key;
     wk->client = c;
@@ -338,7 +350,8 @@ void watchForKey(client *c, robj *key) {
     watchedKeyLinkToClients(clients, wk);
 }
 
-/* Unwatch all the keys watched by this client. To clean the EXEC dirty
+/* 解开此客户端监视的所有key。清除EXEC脏标志取决于调用者。
+ * Unwatch all the keys watched by this client. To clean the EXEC dirty
  * flag is up to the caller. */
 void unwatchAllKeys(client *c) {
     listIter li;
@@ -383,7 +396,8 @@ int isWatchedKeyExpired(client *c) {
     return 0;
 }
 
-/* "Touch" a key, so that if this key is being WATCHed by some client the
+/* “触摸”一个键，这样如果某个客户端正在监视该键，则下一个EXEC将失败。
+ * "Touch" a key, so that if this key is being WATCHed by some client the
  * next EXEC will fail. */
 void touchWatchedKey(redisDb *db, robj *key) {
     list *clients;
@@ -394,7 +408,8 @@ void touchWatchedKey(redisDb *db, robj *key) {
     clients = dictFetchValue(db->watched_keys, key);
     if (!clients) return;
 
-    /* Mark all the clients watching this key as CLIENT_DIRTY_CAS */
+    /* 如果我们已经在监视此密钥，请将所有监视此key的客户端标记为CLIENT_DIRTY_CAS
+     * Mark all the clients watching this key as CLIENT_DIRTY_CAS */
     /* Check if we are already watching for this key */
     listRewind(clients,&li);
     while((ln = listNext(&li))) {
@@ -485,7 +500,8 @@ void watchCommand(client *c) {
         addReplyError(c,"WATCH inside MULTI is not allowed");
         return;
     }
-    /* No point in watching if the client is already dirty. */
+    /* 如果客户机已经脏了，就没必要再去看了。
+     * No point in watching if the client is already dirty. */
     if (c->flags & CLIENT_DIRTY_CAS) {
         addReply(c,shared.ok);
         return;

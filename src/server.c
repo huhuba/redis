@@ -3935,9 +3935,10 @@ int processCommand(client *c) {
      * the event loop since there is a busy Lua script running in timeout
      * condition, to avoid mixing the propagation of scripts with the
      * propagation of DELs due to eviction. */
-    if (server.maxmemory && !isInsideYieldingLongCommand()) {
+    if (server.maxmemory && !isInsideYieldingLongCommand()) {// Redis指定了最大内存
         // performEvictions()函数是内存淘汰的入口，当它无法淘汰任何Key的时候，
         // 会返回EVICT_FAIL，此时就表示Redis内存已满.EVICT_FAIL:逐出失败
+        // 执行内存淘汰，out_of_memory为1，就是内存淘汰失败了
         int out_of_memory = (performEvictions() == EVICT_FAIL);
 
         /* performEvictions may evict keys, so we need flush pending tracking
@@ -3967,11 +3968,11 @@ int processCommand(client *c) {
             c->cmd->proc != discardCommand &&
             c->cmd->proc != quitCommand &&
             c->cmd->proc != resetCommand) {
-            reject_cmd_on_oom = 1;
+            reject_cmd_on_oom = 1;//该命令在内存淘汰失败的场景中无法执行
         }
         // 如果当前Redis内存已经达到，且无法淘汰数据，就无法执行CMD_DENYOOM类型的命令了
-        if (out_of_memory && reject_cmd_on_oom) {
-            rejectCommand(c, shared.oomerr);
+        if (out_of_memory && reject_cmd_on_oom) {// 内存淘汰失败，且命令不能在内存淘汰失败的场景下被调用
+            rejectCommand(c, shared.oomerr);// 就会设置CLIENT_DIRTY_EXEC标记
             return C_OK;
         }
 

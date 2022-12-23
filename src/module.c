@@ -3619,7 +3619,8 @@ int RM_GetContextFlags(RedisModuleCtx *ctx) {
             }
         }
 
-        /* For DIRTY flags, we need the blocked client if used */
+        /* 对于DIRTY标志，我们需要被阻止的客户端（如果使用）。
+         * For DIRTY flags, we need the blocked client if used */
         client *c = ctx->blocked_client ? ctx->blocked_client->client : ctx->client;
         if (c && (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC))) {
             flags |= REDISMODULE_CTX_FLAGS_MULTI_DIRTY;
