@@ -160,7 +160,9 @@ long long rdbLoadMillisecondTime(rio *rdb, int rdbver) {
     return (long long)t64;
 }
 
-/* Saves an encoded length. The first two bits in the first byte are used to
+/* 保存编码长度。第一字节中的前两位用于保存编码类型。
+ * 有关编码类型的更多信息，请参阅RDB_定义。
+ * Saves an encoded length. The first two bits in the first byte are used to
  * hold the encoding type. See the RDB_* definitions for more information
  * on the types of encoding. */
 int rdbSaveLen(rio *rdb, uint64_t len) {
@@ -446,13 +448,15 @@ ssize_t rdbSaveRawString(rio *rdb, unsigned char *s, size_t len) {
         }
     }
 
-    /* Try LZF compression - under 20 bytes it's unable to compress even
+    /* 尝试LZF压缩-在20字节以下，它甚至无法压缩aaaaaaaaaa，所以跳过它
+     * Try LZF compression - under 20 bytes it's unable to compress even
      * aaaaaaaaaaaaaaaaaa so skip it */
-    if (server.rdb_compression && len > 20) {
+    if (server.rdb_compression && len > 20) {// 检查rdbcompression配置项是否开启，以及字符串本身是否超过了20个字符
         n = rdbSaveLzfStringObject(rdb,s,len);
         if (n == -1) return -1;
-        if (n > 0) return n;
-        /* Return value of 0 means data can't be compressed, save the old way */
+        if (n > 0) return n;// rdbSaveLzfStringObject()返回0，表示无法进行压缩，后面会使用长度前缀编码方式进行存储
+        /* 返回值0表示数据无法压缩，按旧方法保存
+         * Return value of 0 means data can't be compressed, save the old way */
     }
 
     /* Store verbatim */
@@ -651,7 +655,8 @@ int rdbLoadBinaryFloatValue(rio *rdb, float *val) {
     return 0;
 }
 
-/* Save the object type of object "o". */
+/* 保存对象“o”的对象类型
+ * Save the object type of object "o". */
 int rdbSaveObjectType(rio *rdb, robj *o) {
     switch (o->type) {
     case OBJ_STRING:
@@ -803,34 +808,38 @@ size_t rdbSaveStreamConsumers(rio *rdb, streamCG *cg) {
     return nwritten;
 }
 
-/* Save a Redis object.
+/* 保存Redis对象。错误时返回-1，成功时写入的字节数。
+ * Save a Redis object.
  * Returns -1 on error, number of bytes written on success. */
 ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
     ssize_t n = 0, nwritten = 0;
 
-    if (o->type == OBJ_STRING) {
-        /* Save a string value */
+    if (o->type == OBJ_STRING) {// 写入一个字符串类型的Value
+        /* 保存字符串值。 Save a string value */
         if ((n = rdbSaveStringObject(rdb,o)) == -1) return -1;
         nwritten += n;
-    } else if (o->type == OBJ_LIST) {
-        /* Save a list value */
+    } else if (o->type == OBJ_LIST) {// 写入一个quicklist类型的Value
+        /* 保存列表值。Save a list value */
         if (o->encoding == OBJ_ENCODING_QUICKLIST) {
             quicklist *ql = o->ptr;
             quicklistNode *node = ql->head;
-
+            // 先写入quicklist中的节点个数
             if ((n = rdbSaveLen(rdb,ql->len)) == -1) return -1;
             nwritten += n;
 
-            while(node) {
+            while(node) {// 循环写入每个节点
+                // 写入当前节点的压缩状态
                 if ((n = rdbSaveLen(rdb,node->container)) == -1) return -1;
                 nwritten += n;
 
-                if (quicklistNodeIsCompressed(node)) {
+                if (quicklistNodeIsCompressed(node)) {// 压缩节点
                     void *data;
                     size_t compress_len = quicklistGetLzf(node, &data);
+                    // 不解压，直接把压缩好的listpack按照LZF格式，写入到RDB
                     if ((n = rdbSaveLzfBlob(rdb,data,compress_len,node->sz)) == -1) return -1;
                     nwritten += n;
-                } else {
+                } else {// 没有压缩的普通节点
+                    // 按照字符串编码格式写入listpack，其中可能触发压缩
                     if ((n = rdbSaveRawString(rdb,node->entry,node->sz)) == -1) return -1;
                     nwritten += n;
                 }
@@ -839,7 +848,8 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
         } else if (o->encoding == OBJ_ENCODING_LISTPACK) {
             unsigned char *lp = o->ptr;
 
-            /* Save list listpack as a fake quicklist that only has a single node. */
+            /* 将列表列表包保存为只有一个节点的假快速列表
+             * Save list listpack as a fake quicklist that only has a single node. */
             if ((n = rdbSaveLen(rdb,1)) == -1) return -1;
             nwritten += n;
             if ((n = rdbSaveLen(rdb,QUICKLIST_NODE_CONTAINER_PACKED)) == -1) return -1;
@@ -850,7 +860,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
             serverPanic("Unknown list encoding");
         }
     } else if (o->type == OBJ_SET) {
-        /* Save a set value */
+        /* 保存设定值。Save a set value */
         if (o->encoding == OBJ_ENCODING_HT) {
             dict *set = o->ptr;
             dictIterator *di = dictGetIterator(set);
@@ -1183,7 +1193,8 @@ ssize_t rdbSaveAuxFieldStrInt(rio *rdb, char *key, long long val) {
     return rdbSaveAuxField(rdb,key,strlen(key),buf,vlen);
 }
 
-/* Save a few default AUX fields with information about the RDB generated. */
+/* 保存几个默认AUX字段，其中包含有关生成的RDB的信息
+ * Save a few default AUX fields with information about the RDB generated. */
 int rdbSaveInfoAuxFields(rio *rdb, int rdbflags, rdbSaveInfo *rsi) {
     int redis_bits = (sizeof(void*) == 8) ? 64 : 32;
     int aof_base = (rdbflags & RDBFLAGS_AOF_PREAMBLE) != 0;
@@ -1359,7 +1370,11 @@ werr:
     return -1;
 }
 
-/* Produces a dump of the database in RDB format sending it to the specified
+/* 生成RDB格式的数据库转储，将其发送到指定的Redis IO通道。
+ * 如果成功，则返回C_OK，否则返回C_ERR，并且由于IO错误，可能会丢失部分输出或所有输出。
+ * 当函数返回C_ERR并且“error”不为NULL时，“error”所指的整数将设置为IO错误后的errno值。
+ *
+ * Produces a dump of the database in RDB format sending it to the specified
  * Redis I/O channel. On success C_OK is returned, otherwise C_ERR
  * is returned and part of the output, or all the output, can be
  * missing because of I/O errors.
@@ -1376,14 +1391,20 @@ int rdbSaveRio(int req, rio *rdb, int *error, int rdbflags, rdbSaveInfo *rsi) {
     if (server.rdb_checksum)
         rdb->update_cksum = rioGenericUpdateChecksum;
     snprintf(magic,sizeof(magic),"REDIS%04d",RDB_VERSION);
+    // 1、写入魔数
     if (rdbWriteRaw(rdb,magic,9) == -1) goto werr;
+    // 2、写入AUX元数据
     if (rdbSaveInfoAuxFields(rdb,rdbflags,rsi) == -1) goto werr;
+    // 3、写入Module AUX元数据和Function信息
     if (!(req & SLAVE_REQ_RDB_EXCLUDE_DATA) && rdbSaveModulesAux(rdb, REDISMODULE_AUX_BEFORE_RDB) == -1) goto werr;
 
     /* save functions */
     if (!(req & SLAVE_REQ_RDB_EXCLUDE_FUNCTIONS) && rdbSaveFunctions(rdb) == -1) goto werr;
 
-    /* save all databases, skip this if we're in functions-only mode */
+    /*  4、核心for循环，这个 for 循环会遍历 Redis 中的全部数据库，
+        通过 rdbSaveDb() 函数将每个数据库中的键值对数据，全部写入到 RDB 文件的数据部分
+     * 保存所有数据库，如果我们处于仅函数模式，请跳过此操作
+     * save all databases, skip this if we're in functions-only mode */
     if (!(req & SLAVE_REQ_RDB_EXCLUDE_DATA)) {
         for (j = 0; j < server.dbnum; j++) {
             if (rdbSaveDb(rdb, j, rdbflags, &key_counter) == -1) goto werr;
@@ -1392,13 +1413,16 @@ int rdbSaveRio(int req, rio *rdb, int *error, int rdbflags, rdbSaveInfo *rsi) {
 
     if (!(req & SLAVE_REQ_RDB_EXCLUDE_DATA) && rdbSaveModulesAux(rdb, REDISMODULE_AUX_AFTER_RDB) == -1) goto werr;
 
-    /* EOF opcode */
+    /* 5、写入EOF标识
+     * EOF opcode */
     if (rdbSaveType(rdb,RDB_OPCODE_EOF) == -1) goto werr;
 
-    /* CRC64 checksum. It will be zero if checksum computation is disabled, the
+    /* CRC64校验和。如果校验和计算被禁用，它将为零，在这种情况下加载代码将跳过检查。
+     * CRC64 checksum. It will be zero if checksum computation is disabled, the
      * loading code skips the check in this case. */
     cksum = rdb->cksum;
     memrev64ifbe(&cksum);
+    // 6、写入校验码
     if (rioWrite(rdb,&cksum,8) == 0) goto werr;
     return C_OK;
 
@@ -1436,7 +1460,8 @@ werr: /* Write error. */
     return C_ERR;
 }
 
-/* Save the DB on disk. Return C_ERR on error, C_OK on success. */
+/* 将数据库保存在磁盘上。错误时返回C_ERR，成功时返回C_OK
+ * Save the DB on disk. Return C_ERR on error, C_OK on success. */
 int rdbSave(int req, char *filename, rdbSaveInfo *rsi) {
     char tmpfile[256];
     char cwd[MAXPATHLEN]; /* Current working dir path for error messages. */
@@ -1444,7 +1469,7 @@ int rdbSave(int req, char *filename, rdbSaveInfo *rsi) {
     rio rdb;
     int error = 0;
     char *err_op;    /* For a detailed log */
-
+    // 1、调用 fopen() 打开一个名为"temp-进程号.rdb"的文件
     snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
     fp = fopen(tmpfile,"w");
     if (!fp) {
@@ -1458,26 +1483,32 @@ int rdbSave(int req, char *filename, rdbSaveInfo *rsi) {
             str_err);
         return C_ERR;
     }
-
+    //2、通过rioInitWithFile()初始化一个 rio 实例，它是专门用来读写文件的 rio 实现
     rioInitWithFile(&rdb,fp);
     startSaving(RDBFLAGS_NONE);
 
-    if (server.rdb_save_incremental_fsync)
+    if (server.rdb_save_incremental_fsync)// 是否4MB刷一次盘
         rioSetAutoSync(&rdb,REDIS_AUTOSYNC_BYTES);
-
+    //3、按照 RDB 的格式写入到 .rdb  临时文件中，该逻辑封装在 rdbSaveRio() 函数中，下面我们会单独展开分析
     if (rdbSaveRio(req,&rdb,&error,RDBFLAGS_NONE,rsi) == C_ERR) {
         errno = error;
         err_op = "rdbSaveRio";
         goto werr;
     }
 
-    /* Make sure data will not remain on the OS's output buffers */
+    /* 4、通过 fflush() 和 fsync() 将数据完全刷到磁盘上，
+         防止数据残存在应用缓冲区或者 OS 缓冲区中,
+         然后才会调用 fclose() 方法关闭这个 .rdb  临时文件
+     *
+     * 确保数据不会保留在操作系统的输出缓冲区中.Make sure data will not remain on the OS's output buffers */
     if (fflush(fp)) { err_op = "fflush"; goto werr; }
     if (fsync(fileno(fp))) { err_op = "fsync"; goto werr; }
     if (fclose(fp)) { fp = NULL; err_op = "fclose"; goto werr; }
     fp = NULL;
     
-    /* Use RENAME to make sure the DB file is changed atomically only
+    /* 5、把临时文件变成正式的 rdb 文件
+     * 使用RENAME确保仅当生成DB文件正常时，才自动更改DB文件。
+     * Use RENAME to make sure the DB file is changed atomically only
      * if the generate DB file is ok. */
     if (rename(tmpfile,filename) == -1) {
         char *str_err = strerror(errno);
@@ -1494,7 +1525,7 @@ int rdbSave(int req, char *filename, rdbSaveInfo *rsi) {
         return C_ERR;
     }
     if (fsyncFileDir(filename) == -1) { err_op = "fsyncFileDir"; goto werr; }
-
+    // 6、善后工作
     serverLog(LL_NOTICE,"DB saved on disk");
     server.dirty = 0;
     server.lastsave = time(NULL);

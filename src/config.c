@@ -2695,7 +2695,8 @@ static int setConfigSaveOption(standardConfig *config, sds *argv, int argc, cons
             return 0;
         }
     }
-    /* Finally set the new config */
+    /* 先执行resetServerSaveParams()函数，清空默认的saveparam条件
+     * Finally set the new config */
     if (!reading_config_file) {
         resetServerSaveParams();
     } else {
@@ -2708,7 +2709,7 @@ static int setConfigSaveOption(standardConfig *config, sds *argv, int argc, cons
             resetServerSaveParams();
         }
     }
-
+    // 根据redis.conf的save配置项，添加新的saveparam条件
     for (j = 0; j < argc; j += 2) {
         time_t seconds;
         int changes;

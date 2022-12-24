@@ -52,7 +52,8 @@ struct {
     char error[1024];
 } rdbstate;
 
-/* At every loading step try to remember what we were about to do, so that
+/* 在每一个加载步骤中，尝试记住我们要做什么，以便在遇到错误时记录这些信息
+ * At every loading step try to remember what we were about to do, so that
  * we can log this information when an error is encountered. */
 #define RDB_CHECK_DOING_START 0
 #define RDB_CHECK_DOING_READ_TYPE 1

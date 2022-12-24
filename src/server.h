@@ -1282,8 +1282,8 @@ typedef struct aclInfo {
 } aclInfo;
 
 struct saveparam {
-    time_t seconds;
-    int changes;
+    time_t seconds;// 间隔时间
+    int changes;// 被修改的Key的个数
 };
 
 struct moduleLoadQueueEntry {
@@ -1771,24 +1771,25 @@ struct redisServer {
                                         default no. (for testings). */
 
     /* RDB persistence */
-    long long dirty;                /* Changes to DB from the last save */
+    long long dirty;                /* 上次保存后数据库更改的key的数量。Changes to DB from the last save */
     long long dirty_before_bgsave;  /* Used to restore dirty on failed BGSAVE */
     long long rdb_last_load_keys_expired;  /* number of expired keys when loading RDB */
     long long rdb_last_load_keys_loaded;   /* number of loaded keys when loading RDB */
-    struct saveparam *saveparams;   /* Save points array for RDB */
-    int saveparamslen;              /* Number of saving points */
+    //saveparams 中记录的多个 RDB 触发条件是 “或” 的关系，任意一个条件满足之后，就会触发 RDB 文件的生成。
+    struct saveparam *saveparams;   /* 为RDB保存点(saveparam)数组(每个 saveparam 实例中都记录了触发 RDB 持久化的一个条件)。Save points array for RDB */
+    int saveparamslen;              /* 保存点数.Number of saving points */
     char *rdb_filename;             /* Name of RDB file */
     int rdb_compression;            /* Use compression in RDB? */
     int rdb_checksum;               /* Use RDB checksum? */
     int rdb_del_sync_files;         /* Remove RDB files used only for SYNC if
                                        the instance does not use persistence. */
-    time_t lastsave;                /* Unix time of last successful save */
-    time_t lastbgsave_try;          /* Unix time of last attempted bgsave */
+    time_t lastsave;                /* 上次成功保存的Unix时间。Unix time of last successful save */
+    time_t lastbgsave_try;          /*上次尝试进行后台 RDB 持久化的时间戳。 Unix time of last attempted bgsave */
     time_t rdb_save_time_last;      /* Time used by last RDB save run. */
     time_t rdb_save_time_start;     /* Current RDB save start time. */
     int rdb_bgsave_scheduled;       /* BGSAVE when possible if true. */
     int rdb_child_type;             /* Type of save by active child. */
-    int lastbgsave_status;          /* C_OK or C_ERR */
+    int lastbgsave_status;          /* 上次后台 RDB 持久化的结果。 C_OK or C_ERR */
     int stop_writes_on_bgsave_err;  /* Don't allow writes if can't BGSAVE */
     int rdb_pipe_read;              /* RDB pipe used to transfer the rdb data */
                                     /* to the parent process in diskless repl. */

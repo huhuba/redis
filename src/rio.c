@@ -107,39 +107,46 @@ void rioInitWithBuffer(rio *r, sds s) {
 
 /* --------------------- Stdio file pointer implementation ------------------- */
 
-/* Returns 1 or 0 for success/failure. */
+/* 对于成功失败，返回1或0.Returns 1 or 0 for success/failure. */
 static size_t rioFileWrite(rio *r, const void *buf, size_t len) {
+    // 没有开启自动刷盘功能，只调用fwrite()函数写入，不做刷盘
     if (!r->io.file.autosync) return fwrite(buf,len,1,r->io.file.fp);
 
     size_t nwritten = 0;
-    /* Incrementally write data to the file, avoid a single write larger than
+    /* 逐步将数据写入文件，避免一次写入超过自动同步阈值（这样内核的缓冲区缓存一次不会有太多脏页）
+     * Incrementally write data to the file, avoid a single write larger than
      * the autosync threshold (so that the kernel's buffer cache never has too
      * many dirty pages at once). */
-    while (len != nwritten) {
+    while (len != nwritten) {// 为了防止一次写入大量数据，这里循环多次进行fwrite()
         serverAssert(r->io.file.autosync > r->io.file.buffered);
         size_t nalign = (size_t)(r->io.file.autosync - r->io.file.buffered);
+        // 计算此次通过fwrite()写入的字节数数
         size_t towrite = nalign > len-nwritten ? len-nwritten : nalign;
 
         if (fwrite((char*)buf+nwritten,towrite,1,r->io.file.fp) == 0) return 0;
         nwritten += towrite;
         r->io.file.buffered += towrite;
 
-        if (r->io.file.buffered >= r->io.file.autosync) {
-            fflush(r->io.file.fp);
+        if (r->io.file.buffered >= r->io.file.autosync) {// 当写入数据超过4MB，就会进行刷盘
+            fflush(r->io.file.fp);// 把数据刷到内核缓冲区
 
             size_t processed = r->processed_bytes + nwritten;
             serverAssert(processed % r->io.file.autosync == 0);
             serverAssert(r->io.file.buffered == r->io.file.autosync);
 
 #if HAVE_SYNC_FILE_RANGE
-            /* Start writeout asynchronously. */
+            /* 调用sync_file_range()进行异步刷盘
+             *
+             * 异步开始写操作.Start writeout asynchronously. */
             if (sync_file_range(fileno(r->io.file.fp),
                     processed - r->io.file.autosync, r->io.file.autosync,
                     SYNC_FILE_RANGE_WRITE) == -1)
                 return 0;
-
+            // 周期性调用同步刷盘，如果异步刷盘没有堆积，这里的同步刷盘会很快
             if (processed >= (size_t)r->io.file.autosync * 2) {
-                /* To keep the promise to 'autosync', we should make sure last
+                /* 为了信守“自动同步”的承诺，我们应该确保最后一次异步写操作持续到磁盘中。
+                 * 如果由于磁盘速度慢，最后一次写操作未完成，则此调用可能会阻塞
+                 * To keep the promise to 'autosync', we should make sure last
                  * asynchronous writeout persists into disk. This call may block
                  * if last writeout is not finished since disk is slow. */
                 if (sync_file_range(fileno(r->io.file.fp),

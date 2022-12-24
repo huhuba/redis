@@ -1196,7 +1196,18 @@ void cronUpdateMemoryStats() {
     }
 }
 
-/* This is our timer interrupt, called server.hz times per second.
+/* 这是我们的计时器中断，称为server.hz次/秒。这里是我们需要异步完成的一些事情。
+ * 例如：
+ * -活动的过期密钥收集（它也在查找时以惰性方式执行）。
+ * -软件监视器。
+ * -更新一些统计数据。
+ * -DB哈希表的增量重新散列。
+ * -触发BGSAVE AOF重写，并处理终止的子级。
+ * -不同类型的客户端超时。
+ * -复制重新连接。
+ * -更多。。。
+ * 这里直接调用的每一项都将每秒调用server.hz次，因此为了限制我们希望执行的事情的频率，我们使用了一个宏：run_with_period（毫秒）
+ * This is our timer interrupt, called server.hz times per second.
  * Here is where we do a number of things that need to be done asynchronously.
  * For instance:
  *
@@ -1333,13 +1344,16 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         }
     }
 
-    /* We need to do a few operations on clients asynchronously. */
+    /* 我们需要对客户端异步执行一些操作
+     * We need to do a few operations on clients asynchronously. */
     clientsCron();
 
-    /* Handle background operations on Redis databases. */
+    /* 处理Redis数据库上的后台操作。
+     * Handle background operations on Redis databases. */
     databasesCron();
 
-    /* Start a scheduled AOF rewrite if this was requested by the user while
+    /* 如果BGSAVE正在进行中，用户请求进行AOF重写，则启动计划的AOF重写。
+     * Start a scheduled AOF rewrite if this was requested by the user while
      * a BGSAVE was in progress. */
     if (!hasActiveChildProcess() &&
         server.aof_rewrite_scheduled &&
@@ -1348,37 +1362,44 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         rewriteAppendOnlyFileBackground();
     }
 
-    /* Check if a background saving or AOF rewrite in progress terminated. */
+    /*检查是否有子进程在生成RDB文件或是AOF的重写，如果有，则不会再新启动子进程进行RDB持久化
+     * Check if a background saving or AOF rewrite in progress terminated. */
     if (hasActiveChildProcess() || ldbPendingChildren())
     {
         run_with_period(1000) receiveChildInfo();
-        checkChildrenDone();
+        checkChildrenDone();// 检查子进程是否结束
     } else {
-        /* If there is not a background saving/rewrite in progress check if
+        /* 如果没有正在进行的后台保存重写，请检查是否必须立即保存重写。
+         * If there is not a background saving/rewrite in progress check if
          * we have to save/rewrite now. */
         for (j = 0; j < server.saveparamslen; j++) {
             struct saveparam *sp = server.saveparams+j;
 
-            /* Save if we reached the given amount of changes,
+            /* 如果我们达到了给定的更改量、给定的秒数，并且最新的bgsave成功，
+             * 或者如果发生错误，至少已经过了CONFIG_bgsave_RETRY_DELAY秒，则保存。
+             * Save if we reached the given amount of changes,
              * the given amount of seconds, and if the latest bgsave was
              * successful or if, in case of an error, at least
              * CONFIG_BGSAVE_RETRY_DELAY seconds already elapsed. */
             if (server.dirty >= sp->changes &&
                 server.unixtime-server.lastsave > sp->seconds &&
+                 // 两次尝试需要一定间隔
                 (server.unixtime-server.lastbgsave_try >
                  CONFIG_BGSAVE_RETRY_DELAY ||
-                 server.lastbgsave_status == C_OK))
+                 server.lastbgsave_status == C_OK))//上次后台持久化是否成功
             {
                 serverLog(LL_NOTICE,"%d changes in %d seconds. Saving...",
                     sp->changes, (int)sp->seconds);
                 rdbSaveInfo rsi, *rsiptr;
                 rsiptr = rdbPopulateSaveInfo(&rsi);
+                // fork出一个子进程，执行后台RDB持久化
                 rdbSaveBackground(SLAVE_REQ_NONE,server.rdb_filename,rsiptr);
                 break;
             }
         }
 
-        /* Trigger an AOF rewrite if needed. */
+        /* 如果需要，触发AOF重写。
+         * Trigger an AOF rewrite if needed. */
         if (server.aof_state == AOF_ON &&
             !hasActiveChildProcess() &&
             server.aof_rewrite_perc &&
@@ -2007,9 +2028,9 @@ void initServerConfig(void) {
     atomicSet(server.lruclock,lruclock);
     resetServerSaveParams();
 
-    appendServerSaveParams(60*60,1);  /* save after 1 hour and 1 change */
-    appendServerSaveParams(300,100);  /* save after 5 minutes and 100 changes */
-    appendServerSaveParams(60,10000); /* save after 1 minute and 10000 changes */
+    appendServerSaveParams(60*60,1);  /* 如果距离上次RDB持久化超过1小时，且有1个Key被修改过，则触发RDB持久化.save after 1 hour and 1 change */
+    appendServerSaveParams(300,100);  /* 如果距离上次RDB持久化超过5小时，且有100个Key被修改过，则触发RDB持久化 .save after 5 minutes and 100 changes */
+    appendServerSaveParams(60,10000); /* 如果距离上次RDB持久化超过1分钟，且有10000个Key被修改过，则触发RDB持久化.save after 1 minute and 10000 changes */
 
     /* Replication related */
     server.masterhost = NULL;
