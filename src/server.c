@@ -1113,7 +1113,9 @@ void updateCachedTime(int update_daylight_info) {
 void checkChildrenDone(void) {
     int statloc = 0;
     pid_t pid;
-
+    // 如果pid(第一个参数)指定的子进程没有结束，则waitpid()会阻塞等待，但是这里使用
+    // 了WNOHANG配置，此时waitpid()函数会立即返回0，而不是阻塞等待。如果子进程结束了，
+    // 则返回该子进程的进程号。如果第一个参数为-1，则表示waitpid()函数会等待任意子进程结束
     if ((pid = waitpid(-1, &statloc, WNOHANG)) != 0) {
         int exitcode = WIFEXITED(statloc) ? WEXITSTATUS(statloc) : -1;
         int bysignal = 0;
@@ -1365,7 +1367,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /*检查是否有子进程在生成RDB文件或是AOF的重写，如果有，则不会再新启动子进程进行RDB持久化
      * Check if a background saving or AOF rewrite in progress terminated. */
     if (hasActiveChildProcess() || ldbPendingChildren())
-    {
+    {// 子进程存在
+        // 从管道中读取数据，并更新统计信息。主要更新的是stat_current_cow_bytes、
+        // stat_current_save_keys_processed、stat_current_cow_updated等字段，
+        // 记录了Copy-On-Write涉及到的字节数以及RDB持久化的进度
         run_with_period(1000) receiveChildInfo();
         checkChildrenDone();// 检查子进程是否结束
     } else {
@@ -6549,20 +6554,22 @@ void closeChildUnusedResourceAfterFork() {
     server.pidfile = NULL;
 }
 
-/* purpose is one of CHILD_TYPE_ types */
+/*目的是CHILD_TYPE_类型之一
+ * purpose is one of CHILD_TYPE_ types */
 int redisFork(int purpose) {
     if (isMutuallyExclusiveChildType(purpose)) {
         if (hasActiveChildProcess()) {
             errno = EEXIST;
             return -1;
         }
-
+        // 1、首先会检查此次启动子进程的目的，如果是用于 RDB 持久化，则会启动一个 pipe 用于父子进程通信
         openChildInfoPipe();
     }
 
     int childpid;
     long long start = ustime();
-    if ((childpid = fork()) == 0) {
+    // 2、通过fork()系统调用创建子进程
+    if ((childpid = fork()) == 0) // 子进程执行的分支
         /* Child.
          *
          * The order of setting things up follows some reasoning:
@@ -6571,15 +6578,16 @@ int redisFork(int purpose) {
          * memory resources are low.
          */
         server.in_fork_child = purpose;
-        setupChildSignalHandlers();
+        setupChildSignalHandlers();// 注册信号回调
         setOOMScoreAdj(CONFIG_OOM_BGCHILD);
         dismissMemoryInChild();
+        // 释放一些使用不到的网络资源和文件
         closeChildUnusedResourceAfterFork();
         /* Close the reading part, so that if the parent crashes, the child will
          * get a write error and exit. */
         if (server.child_info_pipe[0] != -1)
             close(server.child_info_pipe[0]);
-    } else {
+    } else {// 父进程执行的分支
         /* Parent */
         if (childpid == -1) {
             int fork_errno = errno;
@@ -6587,7 +6595,8 @@ int redisFork(int purpose) {
             errno = fork_errno;
             return -1;
         }
-
+        // 它会更新一些统计信息，例如，fork() 调用的次数（记录到 redisServer.stat_total_forks 字段）、
+        // 耗时（记录到 redisServer.stat_fork_time 字段）等等。
         server.stat_total_forks++;
         server.stat_fork_time = ustime()-start;
         server.stat_fork_rate = (double) zmalloc_used_memory() * 1000000 / server.stat_fork_time / (1024*1024*1024); /* GB per second. */
@@ -6601,6 +6610,8 @@ int redisFork(int purpose) {
          * - used for debugging, and we don't want to block it from running while other
          *   forks are running (like RDB and AOF) */
         if (isMutuallyExclusiveChildType(purpose)) {
+            // 还会更新 server 中子进程相关的字段，例如，子进程的进程号（对应 redisServer.child_pid 字段）、
+            // 当前子进程的目的（对应 redisServer.child_type 字段）以及 Copy-on-Write 相关的统计信息
             server.child_pid = childpid;
             server.child_type = purpose;
             server.stat_current_cow_peak = 0;

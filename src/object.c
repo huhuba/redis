@@ -420,11 +420,16 @@ void dismissListObject(robj *o, size_t size_hint) {
     if (o->encoding == OBJ_ENCODING_QUICKLIST) {
         quicklist *ql = o->ptr;
         serverAssert(ql->len != 0);
-        /* We iterate all nodes only when average node size is bigger than a
+        /*  检查quicklistNode节点的平均大小，是不是超过了内存页的大小，
+         *  只有超过了内存页大小，才会进行优化
+         *
+         * 只有当平均节点大小大于页面大小时，我们才会对所有节点进行迭代，而且很有可能会忽略某些内容。
+         * We iterate all nodes only when average node size is bigger than a
          * page size, and there's a high chance we'll actually dismiss something. */
         if (size_hint / ql->len >= server.page_size) {
             quicklistNode *node = ql->head;
             while (node) {
+                // 尝试释放单个quicklistNode节点占用的内存页
                 if (quicklistNodeIsCompressed(node)) {
                     dismissMemory(node->entry, ((quicklistLZF*)node->entry)->sz);
                 } else {
@@ -557,10 +562,16 @@ void dismissStreamObject(robj *o, size_t size_hint) {
  * it can reduce unnecessary iteration for complex data types that are probably
  * not going to release any memory. */
 void dismissObject(robj *o, size_t size_hint) {
-    /* madvise(MADV_DONTNEED) may not work if Transparent Huge Pages is enabled. */
+    /* 开启了系统开启THP的话，madvise(MADV_DONTNEED)优化就不会被使用
+     *
+     * 如果启用了透明巨大页面，madvise（MADV_DONTNEED）可能无法工作。
+     * madvise(MADV_DONTNEED) may not work if Transparent Huge Pages is enabled. */
     if (server.thp_enabled) return;
 
-    /* Currently we use zmadvise_dontneed only when we use jemalloc with Linux.
+    /* 目前，我们仅在Linux上使用jemalloc时使用zmadvise_dontneted。
+     * 所以我们避免了这些毫无意义的循环，因为它们不会做任何事情
+     *
+     * Currently we use zmadvise_dontneed only when we use jemalloc with Linux.
      * so we avoid these pointless loops when they're not going to do anything. */
 #if defined(USE_JEMALLOC) && defined(__linux__)
     if (o->refcount != 1) return;

@@ -1315,7 +1315,10 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
     if (dictSize(d) == 0) return 0;
     di = dictGetSafeIterator(d);
 
-    /* Write the SELECT DB opcode */
+    /*调用rdbSaveKeyValuePair()函数，持久化键值对
+     *
+     * 编写SELECT DB操作码
+     * Write the SELECT DB opcode */
     if ((res = rdbSaveType(rdb,RDB_OPCODE_SELECTDB)) < 0) goto werr;
     written += res;
     if ((res = rdbSaveLen(rdb, dbid)) < 0) goto werr;
@@ -1344,10 +1347,14 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
         if ((res = rdbSaveKeyValuePair(rdb, &key, o, expire, dbid)) < 0) goto werr;
         written += res;
 
-        /* In fork child process, we can try to release memory back to the
+        /* 在fork子进程中，我们可以尝试将内存释放回操作系统，并可能避免或减少COW。
+         * 我们给解除机制一个关于我们存储的对象的估计大小的提示。
+         *
+         * In fork child process, we can try to release memory back to the
          * OS and possibly avoid or decrease COW. We give the dismiss
          * mechanism a hint about an estimated size of the object we stored. */
-        size_t dump_size = rdb->processed_bytes - rdb_bytes_before_key;
+        size_t dump_size = rdb->processed_bytes - rdb_bytes_before_key; // 关键在这里！！！这里会计算此次写入键值对大小，然后通过dismissObject来释放子进程中的内存页
+
         if (server.in_fork_child) dismissObject(o, dump_size);
 
         /* Update child info every 1 second (approximately).
@@ -3385,24 +3392,30 @@ int rdbLoad(char *filename, rdbSaveInfo *rsi, int rdbflags) {
     return (retval==C_OK) ? RDB_OK : RDB_FAILED;
 }
 
-/* A background saving child (BGSAVE) terminated its work. Handle this.
+/* 后台保存子项（BGSAVE）终止了其工作。处理好这个。此函数涵盖实际BGSAVE的情况。
+ * A background saving child (BGSAVE) terminated its work. Handle this.
  * This function covers the case of actual BGSAVEs. */
 static void backgroundSaveDoneHandlerDisk(int exitcode, int bysignal) {
     if (!bysignal && exitcode == 0) {
+        // RDB持久化子进程正常结束
+        // rdbSaveBackground()中在子进程启动的时候，使用dirty_before_bgsave记录了当时的
+        // dirty值，子进程会将RDB持久化之前的全部变更都已经持久化到了RDB文件中，在RDB持久化过程中
+        // 的修改会导致主进程的dirty值继续递增，所以在子进程结束的时候，会进行dirty的更新
         serverLog(LL_NOTICE,
             "Background saving terminated with success");
         server.dirty = server.dirty - server.dirty_before_bgsave;
         server.lastsave = time(NULL);
         server.lastbgsave_status = C_OK;
-    } else if (!bysignal && exitcode != 0) {
+    } else if (!bysignal && exitcode != 0) {// RDB持久化子进程异常结束
         serverLog(LL_WARNING, "Background saving error");
         server.lastbgsave_status = C_ERR;
-    } else {
+    } else {// RDB持久化子进程被SIGUSR1信号结束的
         mstime_t latency;
 
         serverLog(LL_WARNING,
             "Background saving terminated by signal %d", bysignal);
         latencyStartMonitor(latency);
+        // 提交删除rdb临时文件的后台任务
         rdbRemoveTempFile(server.child_pid, 0);
         latencyEndMonitor(latency);
         latencyAddSampleIfNeeded("rdb-unlink-temp-file",latency);
@@ -3468,7 +3481,7 @@ void backgroundSaveDoneHandler(int exitcode, int bysignal) {
  * the child did not exit for an error, but because we wanted), and performs
  * the cleanup needed. */
 void killRDBChild(void) {
-    kill(server.child_pid, SIGUSR1);
+    kill(server.child_pid, SIGUSR1);// 终止子进程
     /* Because we are not using here waitpid (like we have in killAppendOnlyChild
      * and TerminateModuleForkChild), all the cleanup operations is done by
      * checkChildrenDone, that later will find that the process killed.

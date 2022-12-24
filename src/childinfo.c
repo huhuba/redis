@@ -32,8 +32,8 @@
 #include <fcntl.h>
 
 typedef struct {
-    size_t keys;
-    size_t cow;
+    size_t keys;// 写入Key个数
+    size_t cow; // 发生 Copy-on-Write 的字节数
     monotime cow_updated;
     double progress;
     childInfoType information_type; /* Type of information */
@@ -65,7 +65,8 @@ void closeChildInfoPipe(void) {
     }
 }
 
-/* Send save data to parent. */
+/* 向父级发送保存数据。
+ * Send save data to parent. */
 void sendChildInfoGeneric(childInfoType info_type, size_t keys, double progress, char *pname) {
     if (server.child_info_pipe[1] == -1) return;
 
@@ -75,7 +76,7 @@ void sendChildInfoGeneric(childInfoType info_type, size_t keys, double progress,
     static size_t peak_cow = 0;
     static size_t update_count = 0;
     static unsigned long long sum_cow = 0;
-
+    // 初始化child_info_data
     child_info_data data = {0}; /* zero everything, including padding to satisfy valgrind */
 
     /* When called to report current info, we need to throttle down CoW updates as they
@@ -110,7 +111,7 @@ void sendChildInfoGeneric(childInfoType info_type, size_t keys, double progress,
     data.progress = progress;
 
     ssize_t wlen = sizeof(data);
-
+    // 将child_info_data实例写入server.child_info_pipe[1]管道中
     if (write(server.child_info_pipe[1], &data, wlen) != wlen) {
         /* Failed writing to parent, it could have been killed, exit. */
         serverLog(LL_WARNING,"Child failed reporting info to parent, exiting. %s", strerror(errno));
@@ -166,7 +167,7 @@ int readChildInfo(childInfoType *information_type, size_t *cow, monotime *cow_up
     }
 }
 
-/* Receive info data from child. */
+/* 从子级接收信息数据。Receive info data from child. */
 void receiveChildInfo(void) {
     if (server.child_info_pipe[0] == -1) return;
 
@@ -176,8 +177,12 @@ void receiveChildInfo(void) {
     double progress;
     childInfoType information_type;
 
-    /* Drain the pipe and update child info so that we get the final message. */
+    /*  readChildInfo()函数中会从server.child_info_pipe[0]读取
+     *
+     * 排空管道并更新子信息，以便我们得到最终消息。
+     * Drain the pipe and update child info so that we get the final message. */
     while (readChildInfo(&information_type, &cow, &cow_updated, &keys, &progress)) {
+        // 根据读取到的数据，更新server的对应字段
         updateChildInfo(information_type, cow, cow_updated, keys, progress);
     }
 }
