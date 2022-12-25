@@ -1335,7 +1335,8 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
     if ((res = rdbSaveLen(rdb,expires_size)) < 0) goto werr;
     written += res;
 
-    /* Iterate this DB writing every entry */
+    /* 迭代此DB写入每个条目
+     * Iterate this DB writing every entry */
     while((de = dictNext(di)) != NULL) {
         sds keystr = dictGetKey(de);
         robj key, *o = dictGetVal(de);
@@ -1357,7 +1358,9 @@ ssize_t rdbSaveDb(rio *rdb, int dbid, int rdbflags, long *key_counter) {
 
         if (server.in_fork_child) dismissObject(o, dump_size);
 
-        /* Update child info every 1 second (approximately).
+        /* 每1秒（大约）更新一次子信息。
+         * 为了避免在每次迭代中调用mstime（），我们将每隔1024个键检查diff
+         * Update child info every 1 second (approximately).
          * in order to avoid calling mstime() on each iteration, we will
          * check the diff every 1024 keys */
         if (((*key_counter)++ & 1023) == 0) {
@@ -3428,7 +3431,9 @@ static void backgroundSaveDoneHandlerDisk(int exitcode, int bysignal) {
     }
 }
 
-/* A background saving child (BGSAVE) terminated its work. Handle this.
+/* 后台保存子项（BGSAVE）终止了其工作。处理好这个。
+ * 此函数涵盖RDB->Slaves套接字传输用于无盘复制的情况。
+ * A background saving child (BGSAVE) terminated its work. Handle this.
  * This function covers the case of RDB -> Slaves socket transfers for
  * diskless replication. */
 static void backgroundSaveDoneHandlerSocket(int exitcode, int bysignal) {
@@ -3456,7 +3461,8 @@ static void backgroundSaveDoneHandlerSocket(int exitcode, int bysignal) {
     server.rdb_pipe_bufflen = 0;
 }
 
-/* When a background RDB saving/transfer terminates, call the right handler. */
+/* 当后台RDB保存传输终止时，调用正确的处理程序。
+ * When a background RDB saving/transfer terminates, call the right handler. */
 void backgroundSaveDoneHandler(int exitcode, int bysignal) {
     int type = server.rdb_child_type;
     switch(server.rdb_child_type) {

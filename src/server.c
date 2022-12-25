@@ -3245,7 +3245,12 @@ static int shouldPropagate(int target) {
     return 0;
 }
 
-/* Propagate the specified command (in the context of the specified database id)
+/* 将指定的命令（在指定数据库id的上下文中）传播到AOF和从属服务器。
+ * 标志是：+PROPAGATE_NONE（完全不传播命令）+PROPAGTE_AOF（如果启用，则传播到AOF文件中）+PROPAGATE_REPL（传播到复制链接中）之间的xor。
+ * 这是一个内部低级函数，不应调用！用于传播命令的API也是Propagate（）。
+ * dbid值-1被保存，以表示被调用方不希望复制此命令的SELECT（用于数据库无关命令）。
+ *
+ * Propagate the specified command (in the context of the specified database id)
  * to AOF and Slaves.
  *
  * flags are an xor between:
@@ -3353,7 +3358,10 @@ void updateCommandLatencyHistogram(struct hdr_histogram **latency_histogram, int
     hdr_record_value(*latency_histogram,duration_hist);
 }
 
-/* Handle the alsoPropagate() API to handle commands that want to propagate
+/* 处理alsoPropagate（）API以处理要传播多个分隔命令的命令。
+ * 请注意，Propagate（）不受CLIENT_PREVENT_PROP标志的影响。
+ *
+ * Handle the alsoPropagate() API to handle commands that want to propagate
  * multiple separated commands. Note that alsoPropagate() is not affected
  * by CLIENT_PREVENT_PROP flag. */
 static void propagatePendingCommands() {
@@ -3364,32 +3372,41 @@ static void propagatePendingCommands() {
     redisOp *rop;
     int multi_emitted = 0;
 
-    /* Wrap the commands in server.also_propagate array,
+    /* 发现redisOP数组中不止一条命令，就会用事务进行包裹，这里写入一条MULTI命令
+     *
+     * 在server.also_pagate数组中包装命令，但如果我们已经在MULTI上下文中，则不要包装它，以防嵌套的MULTIEXEC。
+     * 如果数组只包含一个命令，则无需包装它，因为单个命令是原子的。
+     *
+     * Wrap the commands in server.also_propagate array,
      * but don't wrap it if we are already in MULTI context,
      * in case the nested MULTI/EXEC.
      *
      * And if the array contains only one command, no need to
      * wrap it, since the single command is atomic. */
     if (server.also_propagate.numops > 1) {
-        /* We use dbid=-1 to indicate we do not want to replicate SELECT.
+        /* 我们使用dbid=-1表示不想复制SELECT。
+         * 它将与下一个命令一起插入（在MULTI内）
+         *
+         * We use dbid=-1 to indicate we do not want to replicate SELECT.
          * It'll be inserted together with the next command (inside the MULTI) */
         propagateNow(-1,&shared.multi,1,PROPAGATE_AOF|PROPAGATE_REPL);
         multi_emitted = 1;
     }
 
-
+    // 循环写入redisOp数组中的命令
     for (j = 0; j < server.also_propagate.numops; j++) {
         rop = &server.also_propagate.ops[j];
         serverAssert(rop->target);
         propagateNow(rop->dbid,rop->argv,rop->argc,rop->target);
     }
 
-    if (multi_emitted) {
-        /* We use dbid=-1 to indicate we do not want to replicate select */
+    if (multi_emitted) {// 最后补充一条EXEC命令，提交事务
+        /* 我们使用dbid=-1表示不想复制select
+         * We use dbid=-1 to indicate we do not want to replicate select */
         propagateNow(-1,&shared.exec,1,PROPAGATE_AOF|PROPAGATE_REPL);
     }
 
-    redisOpArrayFree(&server.also_propagate);
+    redisOpArrayFree(&server.also_propagate);// 释放redisOp数组
 }
 
 /* Performs operations that should be performed after an execution unit ends.
@@ -3487,9 +3504,10 @@ void call(client *c, int flags) {
     uint64_t client_old_flags = c->flags;
     struct redisCommand *real_cmd = c->realcmd;
 
-    /* Initialization: clear the flags that must be set by the command on
+    /* 初始化：清除必须由命令按需设置的标志，并初始化阵列以用于其他命令传播。
+     * Initialization: clear the flags that must be set by the command on
      * demand, and initialize the array for additional commands propagation. */
-    c->flags &= ~(CLIENT_FORCE_AOF|CLIENT_FORCE_REPL|CLIENT_PREVENT_PROP);
+    c->flags &= ~(CLIENT_FORCE_AOF|CLIENT_FORCE_REPL|CLIENT_PREVENT_PROP);// 清空三个标志位，这三个标志位可能在命令执行过程中被设置
 
     /* Redis core is in charge of propagation when the first entry point
      * of call() is processCommand().
@@ -3505,7 +3523,7 @@ void call(client *c, int flags) {
         server.core_propagates = 1;
 
     /* Call the command. */
-    dirty = server.dirty;
+    dirty = server.dirty; // 暂存当前dirty字段的值，如果是修改命令，会对这值进行加一
     incrCommandStatsOnError(NULL, 0);
 
     const long long call_timer = ustime();
@@ -3524,7 +3542,8 @@ void call(client *c, int flags) {
     c->cmd->proc(c);
     server.in_nested_call--;
 
-    /* In order to avoid performance implication due to querying the clock using a system call 3 times,
+    /* 为了避免由于使用系统调用3次查询时钟而导致的性能影响，当我们确定其成本非常低时，我们使用单调时钟，否则返回到非单调调用。
+     * In order to avoid performance implication due to querying the clock using a system call 3 times,
      * we use a monotonic clock, when we are sure its cost is very low, and fall back to non-monotonic call otherwise. */
     ustime_t duration;
     if (monotonicGetType() == MONOTONIC_CLOCK_HW)
@@ -3608,27 +3627,37 @@ void call(client *c, int flags) {
             updateCommandLatencyHistogram(&(real_cmd->latency_histogram), duration*1000);
     }
 
-    /* Propagate the command into the AOF and replication link.
+    /* 将命令传播到AOF和复制链接。我们从不显式传播EXEC，如果需要，
+     * 它将隐式传播（请参阅propagatePendingCommands）。此外，模块命令自行处理
+     * Propagate the command into the AOF and replication link.
      * We never propagate EXEC explicitly, it will be implicitly
      * propagated if needed (see propagatePendingCommands).
      * Also, module commands take care of themselves */
-    if (flags & CMD_CALL_PROPAGATE &&
+    if (flags & CMD_CALL_PROPAGATE && // 是否需要命令写入AOF文件或是传播到从节点中
         (c->flags & CLIENT_PREVENT_PROP) != CLIENT_PREVENT_PROP &&
         c->cmd->proc != execCommand &&
         !(c->cmd->flags & CMD_MODULE))
     {
+        // 初始化propagate_flags，它用来记录当前这条命令，是不是要写入AOF文件或者发到从节点
         int propagate_flags = PROPAGATE_NONE;
 
-        /* Check if the command operated changes in the data set. If so
+        /* 如果是修改命令，propagate_flags里面就要加下面两个标志
+         *
+         * 检查命令操作的数据集是否发生变化。如果是，则为复制AOF传播设置。
+         * Check if the command operated changes in the data set. If so
          * set for replication / AOF propagation. */
         if (dirty) propagate_flags |= (PROPAGATE_AOF|PROPAGATE_REPL);
 
-        /* If the client forced AOF / replication of the command, set
+        /* 根据client->flags设置propagate_flags中的标志位
+         *
+         * 如果客户端强制执行命令的AOF复制，则无论命令对数据集的影响如何，都要设置标志。
+         * If the client forced AOF / replication of the command, set
          * the flags regardless of the command effects on the data set. */
         if (c->flags & CLIENT_FORCE_REPL) propagate_flags |= PROPAGATE_REPL;
         if (c->flags & CLIENT_FORCE_AOF) propagate_flags |= PROPAGATE_AOF;
 
-        /* However prevent AOF / replication propagation if the command
+        /* 但是，如果调用preventCommandPropagation（）或类似命令实现，
+         * However prevent AOF / replication propagation if the command
          * implementation called preventCommandPropagation() or similar,
          * or if we don't have the call() flags to do so. */
         if (c->flags & CLIENT_PREVENT_REPL_PROP ||
@@ -3638,19 +3667,24 @@ void call(client *c, int flags) {
             !(flags & CMD_CALL_PROPAGATE_AOF))
                 propagate_flags &= ~PROPAGATE_AOF;
 
-        /* Call alsoPropagate() only if at least one of AOF / replication
+        /* 仅当需要至少一个AOF复制传播时，才能调用Propagate（）。
+         * Call alsoPropagate() only if at least one of AOF / replication
          * propagation is needed. */
         if (propagate_flags != PROPAGATE_NONE)
+            // alsoPropagate()函数是将命令写入到临时缓冲区中
             alsoPropagate(c->db->id,c->argv,c->argc,propagate_flags);
     }
 
-    /* Restore the old replication flags, since call() can be executed
+    /* 恢复旧的复制标志，因为call（）可以递归执行。
+     * Restore the old replication flags, since call() can be executed
      * recursively. */
     c->flags &= ~(CLIENT_FORCE_AOF|CLIENT_FORCE_REPL|CLIENT_PREVENT_PROP);
     c->flags |= client_old_flags &
         (CLIENT_FORCE_AOF|CLIENT_FORCE_REPL|CLIENT_PREVENT_PROP);
 
-    /* If the client has keys tracking enabled for client side caching,
+    /* 如果客户端为客户端缓存启用了密钥跟踪，请确保记住它通过此命令获取的密钥。
+     * 脚本的工作方式有点不同，如果脚本执行任何读取命令，它会记住脚本中声明的所有密钥。
+     * If the client has keys tracking enabled for client side caching,
      * make sure to remember the keys it fetched via this command. Scripting
      * works a bit differently, where if the scripts executes any read command, it
      * remembers all of the declared keys from the script. */
@@ -3668,16 +3702,20 @@ void call(client *c, int flags) {
 
     server.stat_numcommands++;
 
-    /* Record peak memory after each command and before the eviction that runs
+    /* 在每个命令之后以及在下一个命令之前运行的逐出之前记录峰值内存。
+     * Record peak memory after each command and before the eviction that runs
      * before the next command. */
     size_t zmalloc_used = zmalloc_used_memory();
     if (zmalloc_used > server.stat_peak_memory)
         server.stat_peak_memory = zmalloc_used;
 
-    /* Do some maintenance job and cleanup */
+    /* 真正触发命令传播的地方
+     * 做一些维护工作和清理
+     * Do some maintenance job and cleanup */
     afterCommand(c);
 
-    /* Client pause takes effect after a transaction has finished. This needs
+    /* 客户端暂停在事务完成后生效。这需要在传播所有内容之后进行定位。
+     * Client pause takes effect after a transaction has finished. This needs
      * to be located after everything is propagated. */
     if (!server.in_exec && server.client_pause_in_transaction) {
         server.client_pause_in_transaction = 0;
@@ -3725,17 +3763,22 @@ void rejectCommandFormat(client *c, const char *fmt, ...) {
     rejectCommandSds(c, s);
 }
 
-/* This is called after a command in call, we can do some maintenance job in it. */
+/* 这是在调用命令后调用的，我们可以在其中执行一些维护工作。
+ * This is called after a command in call, we can do some maintenance job in it. */
 void afterCommand(client *c) {
     UNUSED(c);
-    if (!server.in_nested_call) {
-        /* If we are at the top-most call() we can propagate what we accumulated.
+    if (!server.in_nested_call) {// 不是嵌套调用
+        /* 如果我们在最上面的call（），我们可以传播我们积累的内容。
+         * 应该在跟踪HandlePendingKeyInvalidations之前完成，以便我们在使缓存无效之前回复客户端（更有意义）
+         *
+         * If we are at the top-most call() we can propagate what we accumulated.
          * Should be done before trackingHandlePendingKeyInvalidations so that we
          * reply to client before invalidating cache (makes more sense) */
-        if (server.core_propagates) {
+        if (server.core_propagates) {// 由主线程触发，而不是其他Module触发
             postExecutionUnitOperations();
         }
-        /* Flush pending invalidation messages only when we are not in nested call.
+        /* 仅当我们不在嵌套调用中时刷新挂起的无效消息。因此，消息不会与事务响应交错。
+         * Flush pending invalidation messages only when we are not in nested call.
          * So the messages are not interleaved with transaction response. */
         trackingHandlePendingKeyInvalidations();
     }

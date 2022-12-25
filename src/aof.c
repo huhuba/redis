@@ -1295,7 +1295,10 @@ sds genAofTimestampAnnotationIfNeeded(int force) {
     return ts;
 }
 
-/* Write the given command to the aof file.
+/* 将给定的命令写入aof文件。dictid-命令应应用于的字典id，用于决定是否还应将“select”命令写入aof。
+ * 值-1表示在任何情况下都避免写入“select”命令。argv-写入aof的命令。argc-argv中的值数
+ *
+ * Write the given command to the aof file.
  * dictid - dictionary id the command should be applied to,
  *          this is used in order to decide if a `select` command
  *          should also be written to the aof. Value of -1 means
@@ -1308,7 +1311,8 @@ void feedAppendOnlyFile(int dictid, robj **argv, int argc) {
 
     serverAssert(dictid == -1 || (dictid >= 0 && dictid < server.dbnum));
 
-    /* Feed timestamp if needed */
+    /* 如果需要，输入时间戳
+     * Feed timestamp if needed */
     if (server.aof_timestamp_enabled) {
         sds ts = genAofTimestampAnnotationIfNeeded(0);
         if (ts != NULL) {
@@ -1317,7 +1321,9 @@ void feedAppendOnlyFile(int dictid, robj **argv, int argc) {
         }
     }
 
-    /* The DB this command was targeting is not the same as the last command
+    /* 此命令针对的DB与我们附加的上一个命令不同。
+     * 需要发出SELECT命令。
+     * The DB this command was targeting is not the same as the last command
      * we appended. To issue a SELECT command is needed. */
     if (dictid != -1 && dictid != server.aof_selected_db) {
         char seldb[64];
@@ -1328,11 +1334,15 @@ void feedAppendOnlyFile(int dictid, robj **argv, int argc) {
         server.aof_selected_db = dictid;
     }
 
-    /* All commands should be propagated the same way in AOF as in replication.
+    /* 所有命令在AOF中的传播方式应与复制中的相同。无需AOF特定翻译。
+     * All commands should be propagated the same way in AOF as in replication.
      * No need for AOF-specific translation. */
     buf = catAppendOnlyGenericCommand(buf,argc,argv);
 
-    /* Append to the AOF buffer. This will be flushed on disk just before
+    /* 追加到AOF缓冲区。
+     * 这将在重新进入事件循环之前在磁盘上刷新，因此在客户端获得有关所执行操作的肯定答复之前。
+     *
+     * Append to the AOF buffer. This will be flushed on disk just before
      * of re-entering the event loop, so before the client will get a
      * positive reply about the operation performed. */
     if (server.aof_state == AOF_ON ||
