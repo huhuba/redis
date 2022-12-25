@@ -4415,7 +4415,8 @@ struct redisCommandArg CONFIG_SET_Args[] = {
 {0}
 };
 
-/* CONFIG command table */
+/* CONFIG命令表
+ * CONFIG command table */
 struct redisCommand CONFIG_Subcommands[] = {
 {"get","Get the values of configuration parameters","O(N) when N is the number of configuration parameters provided","2.0.0",CMD_DOC_NONE,NULL,NULL,COMMAND_GROUP_SERVER,CONFIG_GET_History,CONFIG_GET_tips,configGetCommand,-3,CMD_ADMIN|CMD_NOSCRIPT|CMD_LOADING|CMD_STALE,0,.args=CONFIG_GET_Args},
 {"help","Show helpful text about the different subcommands","O(1)","5.0.0",CMD_DOC_NONE,NULL,NULL,COMMAND_GROUP_SERVER,CONFIG_HELP_History,CONFIG_HELP_tips,configHelpCommand,2,CMD_LOADING|CMD_STALE,0},
@@ -4461,7 +4462,8 @@ NULL
 /* FAILOVER tips */
 #define FAILOVER_tips NULL
 
-/* FAILOVER target argument table */
+/* 故障转移目标参数表
+ * FAILOVER target argument table */
 struct redisCommandArg FAILOVER_target_Subargs[] = {
 {"host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE},
 {"port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE},
@@ -4469,7 +4471,8 @@ struct redisCommandArg FAILOVER_target_Subargs[] = {
 {0}
 };
 
-/* FAILOVER argument table */
+/* 故障转移参数表
+ * FAILOVER argument table */
 struct redisCommandArg FAILOVER_Args[] = {
 {"target",ARG_TYPE_BLOCK,-1,"TO",NULL,NULL,CMD_ARG_OPTIONAL,.subargs=FAILOVER_target_Subargs},
 {"abort",ARG_TYPE_PURE_TOKEN,-1,"ABORT",NULL,NULL,CMD_ARG_OPTIONAL},
@@ -4493,14 +4496,16 @@ const char *FLUSHALL_tips[] = {
 NULL
 };
 
-/* FLUSHALL flush_type argument table */
+/* FLUSHOLL flush_type参数表
+ * FLUSHALL flush_type argument table */
 struct redisCommandArg FLUSHALL_flush_type_Subargs[] = {
 {"async",ARG_TYPE_PURE_TOKEN,-1,"ASYNC",NULL,"4.0.0",CMD_ARG_NONE},
 {"sync",ARG_TYPE_PURE_TOKEN,-1,"SYNC",NULL,"6.2.0",CMD_ARG_NONE},
 {0}
 };
 
-/* FLUSHALL argument table */
+/* FLUSHALL参数表
+ * FLUSHALL argument table */
 struct redisCommandArg FLUSHALL_Args[] = {
 {"flush-type",ARG_TYPE_ONEOF,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,.subargs=FLUSHALL_flush_type_Subargs},
 {0}

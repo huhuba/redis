@@ -628,7 +628,9 @@ error:
     return -1;
 }
 
-/* Create a pipe buffer with given flags for read end and write end.
+/* 使用给定的读端和写端标志创建管道缓冲区。
+ * 注意，它支持pipe2（）和fcntl（F_SETFL）定义的文件标志，其中一个用例是O_CLOEXEC|O_NONBLOCK。
+ * Create a pipe buffer with given flags for read end and write end.
  * Note that it supports the file flags defined by pipe2() and fcntl(F_SETFL),
  * and one of the use cases is O_CLOEXEC|O_NONBLOCK. */
 int anetPipe(int fds[2], int read_flags, int write_flags) {

@@ -1550,25 +1550,25 @@ werr:
 
 int rdbSaveBackground(int req, char *filename, rdbSaveInfo *rsi) {
     pid_t childpid;
-
+    // 检查server.child_pid,如果不为0，表示已经有子进程存在，这里直接返回异常
     if (hasActiveChildProcess()) return C_ERR;
     server.stat_rdb_saves++;
 
-    server.dirty_before_bgsave = server.dirty;
-    server.lastbgsave_try = time(NULL);
+    server.dirty_before_bgsave = server.dirty;// 暂存主进程的dirty字段
+    server.lastbgsave_try = time(NULL);// 记录最近一次bgsave的尝试时间
 
-    if ((childpid = redisFork(CHILD_TYPE_RDB)) == 0) {
+    if ((childpid = redisFork(CHILD_TYPE_RDB)) == 0) {// 子进程执行该分支
         int retval;
 
         /* Child */
-        redisSetProcTitle("redis-rdb-bgsave");
+        redisSetProcTitle("redis-rdb-bgsave");// 修改子进程的名称
         redisSetCpuAffinity(server.bgsave_cpulist);
-        retval = rdbSave(req, filename,rsi);
+        retval = rdbSave(req, filename,rsi);// 调用rdbSave()函数进行RDB持久化
         if (retval == C_OK) {
             sendChildCowInfo(CHILD_INFO_TYPE_RDB_COW_SIZE, "RDB");
         }
-        exitFromChild((retval == C_OK) ? 0 : 1);
-    } else {
+        exitFromChild((retval == C_OK) ? 0 : 1);// 使用_exit()退出子进程
+    } else {// 父进程执行该分支
         /* Parent */
         if (childpid == -1) {
             server.lastbgsave_status = C_ERR;
@@ -1577,7 +1577,9 @@ int rdbSaveBackground(int req, char *filename, rdbSaveInfo *rsi) {
             return C_ERR;
         }
         serverLog(LL_NOTICE,"Background saving started by pid %ld",(long) childpid);
+        // 更新rdb_save_time_start字段，记录RDB持久化的启动时间
         server.rdb_save_time_start = time(NULL);
+        // rdb_child_type字段记录了此次生成的RDB文件是写入到磁盘上的还是发送给从节点的
         server.rdb_child_type = RDB_CHILD_TYPE_DISK;
         return C_OK;
     }

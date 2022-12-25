@@ -225,7 +225,10 @@ mstime_t commandTimeSnapshot(void) {
     }
 }
 
-/* After an RDB dump or AOF rewrite we exit from children using _exit() instead of
+/* 在RDB转储或AOF重写之后，我们使用_exit（）而不是exit（）退出子进程，因为后者可能与父进程使用的相同文件对象交互。
+ * 但是，如果我们正在测试覆盖率，则使用正常exit（）来获得正确的覆盖率信息。
+ *
+ * After an RDB dump or AOF rewrite we exit from children using _exit() instead of
  * exit(), because the latter may interact with the same file objects used by
  * the parent process. However if we are testing the coverage normal exit() is
  * used in order to obtain the right coverage information. */
@@ -1380,7 +1383,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         for (j = 0; j < server.saveparamslen; j++) {
             struct saveparam *sp = server.saveparams+j;
 
-            /* 如果我们达到了给定的更改量、给定的秒数，并且最新的bgsave成功，
+            /* 检查是否符合自动触发RDB持久化的条件
+             *
+             * 如果我们达到了给定的更改量、给定的秒数，并且最新的bgsave成功，
              * 或者如果发生错误，至少已经过了CONFIG_bgsave_RETRY_DELAY秒，则保存。
              * Save if we reached the given amount of changes,
              * the given amount of seconds, and if the latest bgsave was
@@ -6517,7 +6522,9 @@ void removeSignalHandlers(void) {
     sigaction(SIGABRT, &act, NULL);
 }
 
-/* This is the signal handler for children process. It is currently useful
+/* 这是子进程的信号处理程序。当前，它对于跟踪SIGUSR1非常有用，我们将其发送给子级，
+ * 以便以一种干净的方式终止它，而父级不会检测到错误并因为写入错误而停止接受写入。
+ * This is the signal handler for children process. It is currently useful
  * in order to track the SIGUSR1, that we send to a child in order to terminate
  * it in a clean way, without the parent detecting an error and stop
  * accepting writes because of a write error condition. */
@@ -6531,7 +6538,8 @@ static void sigKillChildHandler(int sig) {
 void setupChildSignalHandlers(void) {
     struct sigaction act;
 
-    /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
+    /* 如果在SA_flags中设置了SA_SIGINFO标志，则使用SA_sigation。否则，将使用sa_handler。
+     * When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
      * Otherwise, sa_handler is used. */
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0;
@@ -6554,7 +6562,7 @@ void closeChildUnusedResourceAfterFork() {
     server.pidfile = NULL;
 }
 
-/*目的是CHILD_TYPE_类型之一
+/* 目的是CHILD_TYPE_类型之一
  * purpose is one of CHILD_TYPE_ types */
 int redisFork(int purpose) {
     if (isMutuallyExclusiveChildType(purpose)) {
@@ -7078,7 +7086,7 @@ int main(int argc, char **argv) {
     char *exec_name = strrchr(argv[0], '/');
     if (exec_name == NULL) exec_name = argv[0];
     server.sentinel_mode = checkForSentinelMode(argc,argv, exec_name);
-    initServerConfig();
+    initServerConfig();//初始化服务配置
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
     moduleInitModulesSystem();
@@ -7215,7 +7223,7 @@ int main(int argc, char **argv) {
             }
             j++;
         }
-
+        //价值configfile文件中的配置
         loadServerConfig(server.configfile, config_from_stdin, options);
         if (server.sentinel_mode) loadSentinelConfigFromQueue();
         sdsfree(options);

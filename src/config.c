@@ -463,24 +463,28 @@ void loadServerConfigFromString(char *config) {
         linenum = i+1;
         lines[i] = sdstrim(lines[i]," \t\r\n");
 
-        /* Skip comments and blank lines */
+        /* 跳过注释和空行
+         * Skip comments and blank lines */
         if (lines[i][0] == '#' || lines[i][0] == '\0') continue;
 
-        /* Split into arguments */
+        /* 拆分为参数
+         * Split into arguments */
         argv = sdssplitargs(lines[i],&argc);
         if (argv == NULL) {
             err = "Unbalanced quotes in configuration line";
             goto loaderr;
         }
 
-        /* Skip this line if the resulting command vector is empty. */
+        /* 如果生成的命令向量为空，则跳过此行。
+         * Skip this line if the resulting command vector is empty. */
         if (argc == 0) {
             sdsfreesplitres(argv,argc);
             continue;
         }
         sdstolower(argv[0]);
 
-        /* Iterate the configs that are standard */
+        /* 迭代标准配置
+         * Iterate the configs that are standard */
         standardConfig *config = lookupConfig(argv[0]);
         if (config) {
             /* For normal single arg configs enforce we have a single argument.
@@ -527,7 +531,8 @@ void loadServerConfigFromString(char *config) {
             }
         }
 
-        /* Execute config directives */
+        /* 执行配置指令
+         * Execute config directives */
         if (!strcasecmp(argv[0],"include") && argc == 2) {
             loadServerConfig(argv[1], 0, NULL);
         } else if (!strcasecmp(argv[0],"rename-command") && argc == 3) {
@@ -539,12 +544,14 @@ void loadServerConfigFromString(char *config) {
                 goto loaderr;
             }
 
-            /* If the target command name is the empty string we just
+            /* 如果目标命令名是空字符串，我们只需将其从命令表中删除
+             * If the target command name is the empty string we just
              * remove it from the command table. */
             retval = dictDelete(server.commands, argv[1]);
             serverAssert(retval == DICT_OK);
 
-            /* Otherwise we re-add the command under a different name. */
+            /* 否则，我们将以不同的名称重新添加命令。
+             * Otherwise we re-add the command under a different name. */
             if (sdslen(argv[2]) != 0) {
                 sds copy = sdsdup(argv[2]);
 
@@ -662,7 +669,8 @@ void loadServerConfig(char *filename, char config_from_stdin, char *options) {
          *                       This will allow for empty conf.d directories to be included. */
 
         if (strchr(filename, '*') || strchr(filename, '?') || strchr(filename, '[')) {
-            /* A wildcard character detected in filename, so let us use glob */
+            /* 在文件名中检测到通配符，因此让我们使用glob
+             * A wildcard character detected in filename, so let us use glob */
             if (glob(filename, 0, NULL, &globbuf) == 0) {
 
                 for (size_t i = 0; i < globbuf.gl_pathc; i++) {
@@ -694,7 +702,7 @@ void loadServerConfig(char *filename, char config_from_stdin, char *options) {
         }
     }
 
-    /* Append content from stdin */
+    /* 附加stdin中的内容. Append content from stdin */
     if (config_from_stdin) {
         serverLog(LL_WARNING,"Reading config from stdin");
         fp = stdin;

@@ -39,12 +39,14 @@ typedef struct {
     childInfoType information_type; /* Type of information */
 } child_info_data;
 
-/* Open a child-parent channel used in order to move information about the
+/* 打开子-父通道，以便将有关RDB AOF保存过程的信息从子通道移动到父通道（例如，所使用的写内存拷贝量）
+ * Open a child-parent channel used in order to move information about the
  * RDB / AOF saving process from the child to the parent (for instance
  * the amount of copy on write memory used) */
 void openChildInfoPipe(void) {
     if (anetPipe(server.child_info_pipe, O_NONBLOCK, 0) == -1) {
-        /* On error our two file descriptors should be still set to -1,
+        /* 出现错误时，我们的两个文件描述符仍应设置为-1，但我们仍然调用closeChildInfoPipe（），因为这不会造成伤害。
+         * On error our two file descriptors should be still set to -1,
          * but we call anyway closeChildInfoPipe() since can't hurt. */
         closeChildInfoPipe();
     } else {
@@ -52,7 +54,8 @@ void openChildInfoPipe(void) {
     }
 }
 
-/* Close the pipes opened with openChildInfoPipe(). */
+/* 关闭使用openChildInfoPipe（）打开的管道。
+ * Close the pipes opened with openChildInfoPipe(). */
 void closeChildInfoPipe(void) {
     if (server.child_info_pipe[0] != -1 ||
         server.child_info_pipe[1] != -1)
