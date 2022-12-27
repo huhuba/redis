@@ -908,16 +908,22 @@ int aofRewriteLimited(void) {
  * AOF file implementation
  * ------------------------------------------------------------------------- */
 
-/* Return true if an AOf fsync is currently already in progress in a
+/* 如果BIO线程中当前正在进行AOf fsync，则返回true。
+ * Return true if an AOf fsync is currently already in progress in a
  * BIO thread. */
 int aofFsyncInProgress(void) {
-    /* Note that we don't care about aof_background_fsync_and_close because
+    /* 注意，我们不关心aof_background_fsync_and_close，
+     * 因为server.aof_fd已被新的INCR aof文件fd替换，
+     * 请参阅openNewIncrAfForAppend。
+     *
+     * Note that we don't care about aof_background_fsync_and_close because
      * server.aof_fd has been replaced by the new INCR AOF file fd,
      * see openNewIncrAofForAppend. */
     return bioPendingJobsOfType(BIO_AOF_FSYNC) != 0;
 }
 
-/* Starts a background task that performs fsync() against the specified
+/* 启动一个后台任务，在另一个线程中对指定的文件描述符（AOF文件之一）执行fsync（）
+ * Starts a background task that performs fsync() against the specified
  * file descriptor (the one of the AOF file) in another thread. */
 void aof_background_fsync(int fd) {
     bioCreateFsyncJob(fd);
@@ -1012,7 +1018,13 @@ int startAppendOnly(void) {
     return C_OK;
 }
 
-/* This is a wrapper to the write syscall in order to retry on short writes
+/* 这是写入系统调用的包装器，以便在短写入或系统调用中断时重试。
+ * 考虑到我们正在向块设备写入数据，我们在短写时重试可能看起来很奇怪：
+ * 通常情况下，如果第一次调用很短，就会出现空间不足的情况，因此下一次很可能会失败。
+ * 然而，在现代系统中，这种情况显然已经不复存在了，而且一般来说，重试写操作似乎更有弹性。
+ * 如果有实际的错误情况，我们将在下次尝试时得到它。
+ *
+ * This is a wrapper to the write syscall in order to retry on short writes
  * or if the syscall gets interrupted. It could look strange that we retry
  * on short writes given that we are writing to a block device: normally if
  * the first call is short, there is a end-of-space condition, so the next
@@ -1038,7 +1050,15 @@ ssize_t aofWrite(int fd, const char *buf, size_t len) {
     return totwritten;
 }
 
-/* Write the append only file buffer on disk.
+/* 在磁盘上写入附加文件缓冲区。
+ * 由于我们需要在回复客户端之前写入AOF，而客户端套接字获得写入的唯一方法是在事件循环时进入，
+ * 因此我们将所有AOF写入累积在内存缓冲区中，并在再次进入事件循环之前使用此函数将其写入磁盘。
+ * 关于“force”参数：当fsync策略设置为“everysec”时，如果后台线程中仍有fsync（）在运行，
+ * 我们可能会延迟刷新，因为例如在Linux上，write（2）无论如何都会被后台fsync阻止。
+ * 当发生这种情况时，我们记得有一些缓冲区需要尽快刷新，并将尝试在serverCron（）函数中执行此操作。
+ * 但是，如果force设置为1，则无论后台fsync如何，我们都将写入。
+ *
+ * Write the append only file buffer on disk.
  *
  * Since we are required to write the AOF before replying to the client,
  * and the only way the client socket can get a write is entering when
@@ -1063,16 +1083,18 @@ void flushAppendOnlyFile(int force) {
     mstime_t latency;
 
     if (sdslen(server.aof_buf) == 0) {
-        /* Check if we need to do fsync even the aof buffer is empty,
+        /* 检查是否需要在aof缓冲区为空的情况下执行fsync，因为以前在aof_fsync_EVERYSEC模式下，
+         * 只有当aof缓冲区时才调用fsync，因此如果用户在一秒钟内调用fsync之前停止写命令，页面缓存中的数据将无法及时刷新。
+         * Check if we need to do fsync even the aof buffer is empty,
          * because previously in AOF_FSYNC_EVERYSEC mode, fsync is
          * called only when aof buffer is not empty, so if users
          * stop write commands before fsync called in one second,
          * the data in page cache cannot be flushed in time. */
-        if (server.aof_fsync == AOF_FSYNC_EVERYSEC &&
-            server.aof_fsync_offset != server.aof_current_size &&
-            server.unixtime > server.aof_last_fsync &&
-            !(sync_in_progress = aofFsyncInProgress())) {
-            goto try_fsync;
+        if (server.aof_fsync == AOF_FSYNC_EVERYSEC &&//当前是everysec策略
+            server.aof_fsync_offset != server.aof_current_size &&//有待刷盘的数据
+            server.unixtime > server.aof_last_fsync &&// 距离上次刷盘时间超过1s
+            !(sync_in_progress = aofFsyncInProgress())) {//后台线程中没有待执行的刷盘任务
+            goto try_fsync;// 向后台线程提交刷盘任务
         } else {
             return;
         }
@@ -1082,37 +1104,45 @@ void flushAppendOnlyFile(int force) {
         sync_in_progress = aofFsyncInProgress();
 
     if (server.aof_fsync == AOF_FSYNC_EVERYSEC && !force) {
-        /* With this append fsync policy we do background fsyncing.
+        /* 使用这个附加fsync策略，我们执行后台fsyncing。
+         * 如果fsync仍在进行中，我们可以尝试将写入延迟几秒钟。
+         * With this append fsync policy we do background fsyncing.
          * If the fsync is still in progress we can try to delay
          * the write for a couple of seconds. */
         if (sync_in_progress) {
             if (server.aof_flush_postponed_start == 0) {
-                /* No previous write postponing, remember that we are
+                /* 没有之前的写延迟，请记住，我们正在延迟刷新和返回。
+                 * No previous write postponing, remember that we are
                  * postponing the flush and return. */
                 server.aof_flush_postponed_start = server.unixtime;
                 return;
             } else if (server.unixtime - server.aof_flush_postponed_start < 2) {
-                /* We were already waiting for fsync to finish, but for less
+                /* 我们已经在等待fsync完成，但在不到两秒的时间内，这仍然正常。请再次推迟。
+                 * We were already waiting for fsync to finish, but for less
                  * than two seconds this is still ok. Postpone again. */
                 return;
             }
-            /* Otherwise fall through, and go write since we can't wait
+            /* 否则就失败了，去写吧，因为我们等不及两秒了。
+             * Otherwise fall through, and go write since we can't wait
              * over two seconds. */
             server.aof_delayed_fsync++;
             serverLog(LL_NOTICE,"Asynchronous AOF fsync is taking too long (disk is busy?). Writing the AOF buffer without waiting for fsync to complete, this may slow down Redis.");
         }
     }
-    /* We want to perform a single write. This should be guaranteed atomic
+    /* 我们想执行一次写入。如果我们正在编写的文件系统是一个真正的物理文件系统，这至少应该是原子的。
+     * 虽然这将使我们避免服务器被杀死，但我认为对于整个服务器因电源问题或类似问题而停止运行，没有什么可做的
+     *
+     * We want to perform a single write. This should be guaranteed atomic
      * at least if the filesystem we are writing is a real physical one.
      * While this will save us against the server being killed I don't think
      * there is much to do about the whole server stopping for power problems
      * or alike */
-
     if (server.aof_flush_sleep && sdslen(server.aof_buf)) {
         usleep(server.aof_flush_sleep);
     }
 
     latencyStartMonitor(latency);
+    //写入文件
     nwritten = aofWrite(server.aof_fd,server.aof_buf,sdslen(server.aof_buf));
     latencyEndMonitor(latency);
     /* We want to capture different events for delayed writes:
@@ -1173,9 +1203,13 @@ void flushAppendOnlyFile(int force) {
             server.aof_last_write_errno = ENOSPC;
         }
 
-        /* Handle the AOF write error. */
+        /* 处理AOF写入错误。
+         * Handle the AOF write error. */
         if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
-            /* We can't recover when the fsync policy is ALWAYS since the reply
+            /* 当fsync策略为ALWAYS时，我们无法恢复，因为客户端的回复已经在输出缓冲区中（写入和读取），
+             * 并且无法回滚对数据库的更改。由于我们与用户签订了一份合同，即在确认或观察到的写入时，
+             * 将在磁盘上同步，因此我们必须退出。
+             * We can't recover when the fsync policy is ALWAYS since the reply
              * for the client is already in the output buffers (both writes and
              * reads), and the changes to the db can't be rolled back. Since we
              * have a contract with the user that on acknowledged or observed
@@ -1219,20 +1253,26 @@ void flushAppendOnlyFile(int force) {
     }
 
 try_fsync:
-    /* Don't fsync if no-appendfsync-on-rewrite is set to yes and there are
+    /* 如果重写时没有appendfsync设置为yes，并且后台有子线程在执行IO，则不要fsync。
+     * Don't fsync if no-appendfsync-on-rewrite is set to yes and there are
      * children doing I/O in the background. */
     if (server.aof_no_fsync_on_rewrite && hasActiveChildProcess())
         return;
 
-    /* Perform the fsync if needed. */
+    /* 如果需要，请执行fsync。
+     * Perform the fsync if needed. */
     if (server.aof_fsync == AOF_FSYNC_ALWAYS) {
         /* redis_fsync is defined as fdatasync() for Linux in order to avoid
          * flushing metadata. */
         latencyStartMonitor(latency);
-        /* Let's try to get this data on the disk. To guarantee data safe when
+        /* 让我们尝试在磁盘上获取这些数据。
+         * 为了保证AOF fsync策略为“总是”时的数据安全，
+         * 如果无法fsync AOF，我们应该退出（请参阅上面写错误后退出（1）旁边的注释）
+         *
+         * Let's try to get this data on the disk. To guarantee data safe when
          * the AOF fsync policy is 'always', we should exit if failed to fsync
          * AOF (see comment next to the exit(1) after write error above). */
-        if (redis_fsync(server.aof_fd) == -1) {
+        if (redis_fsync(server.aof_fd) == -1) {//redis_fsync:刷盘
             serverLog(LL_WARNING,"Can't persist AOF for fsync error when the "
               "AOF fsync policy is 'always': %s. Exiting...", strerror(errno));
             exit(1);
@@ -1241,13 +1281,13 @@ try_fsync:
         latencyAddSampleIfNeeded("aof-fsync-always",latency);
         server.aof_fsync_offset = server.aof_current_size;
         server.aof_last_fsync = server.unixtime;
-    } else if ((server.aof_fsync == AOF_FSYNC_EVERYSEC &&
-                server.unixtime > server.aof_last_fsync)) {
+    } else if ((server.aof_fsync == AOF_FSYNC_EVERYSEC &&//当前是everysec策略
+                server.unixtime > server.aof_last_fsync)) {//上次刷盘距今至少1秒
         if (!sync_in_progress) {
-            aof_background_fsync(server.aof_fd);
+            aof_background_fsync(server.aof_fd);// 提交后台刷盘任务
             server.aof_fsync_offset = server.aof_current_size;
         }
-        server.aof_last_fsync = server.unixtime;
+        server.aof_last_fsync = server.unixtime;// 更新最新的刷盘时间
     }
 }
 
@@ -1334,7 +1374,9 @@ void feedAppendOnlyFile(int dictid, robj **argv, int argc) {
         server.aof_selected_db = dictid;
     }
 
-    /* 所有命令在AOF中的传播方式应与复制中的相同。无需AOF特定翻译。
+    /* 将命令进行编码
+     *
+     * 所有命令在AOF中的传播方式应与复制中的相同。无需AOF特定翻译。
      * All commands should be propagated the same way in AOF as in replication.
      * No need for AOF-specific translation. */
     buf = catAppendOnlyGenericCommand(buf,argc,argv);
@@ -1347,7 +1389,7 @@ void feedAppendOnlyFile(int dictid, robj **argv, int argc) {
      * positive reply about the operation performed. */
     if (server.aof_state == AOF_ON ||
         (server.aof_state == AOF_WAIT_REWRITE && server.child_type == CHILD_TYPE_AOF))
-    {
+    { //写入aof_buf缓冲区
         server.aof_buf = sdscatlen(server.aof_buf, buf, sdslen(buf));
     }
 

@@ -211,8 +211,9 @@ void *bioProcessBackgroundJobs(void *arg) {
          * a stand alone job structure to process.*/
         pthread_mutex_unlock(&bio_mutex[type]);
 
-        /* Process the job accordingly to its type. */
-        if (type == BIO_CLOSE_FILE) {
+        /* 根据作业类型处理作业。
+         * Process the job accordingly to its type. */
+        if (type == BIO_CLOSE_FILE) {// 调用redis_fsync进行刷盘
             if (job->fd_args.need_fsync) {
                 redis_fsync(job->fd_args.fd);
             }
@@ -226,13 +227,14 @@ void *bioProcessBackgroundJobs(void *arg) {
             {
                 int last_status;
                 atomicGet(server.aof_bio_fsync_status,last_status);
+                // 如果刷盘异常，会更新redisServer.aof_bio_fsync_status字段
                 atomicSet(server.aof_bio_fsync_status,C_ERR);
                 atomicSet(server.aof_bio_fsync_errno,errno);
                 if (last_status == C_OK) {
                     serverLog(LL_WARNING,
                         "Fail to fsync the AOF file: %s",strerror(errno));
                 }
-            } else {
+            } else {// 刷盘成功
                 atomicSet(server.aof_bio_fsync_status,C_OK);
             }
         } else if (type == BIO_LAZY_FREE) {
@@ -249,7 +251,8 @@ void *bioProcessBackgroundJobs(void *arg) {
     }
 }
 
-/* Return the number of pending jobs of the specified type. */
+/* 返回指定类型的挂起作业数。
+ * Return the number of pending jobs of the specified type. */
 unsigned long bioPendingJobsOfType(int type) {
     unsigned long long val;
     pthread_mutex_lock(&bio_mutex[type]);

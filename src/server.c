@@ -1424,12 +1424,14 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             }
         }
     }
-    /* Just for the sake of defensive programming, to avoid forgetting to
+    /* 为了防御编程，避免在需要时忘记调用此函数。
+     * Just for the sake of defensive programming, to avoid forgetting to
      * call this function when needed. */
     updateDictResizePolicy();
 
 
-    /* AOF postponed flush: Try at every cron cycle if the slow fsync
+    /* AOF延迟刷新：如果慢fsync完成，请在每个cron周期重试。
+     * AOF postponed flush: Try at every cron cycle if the slow fsync
      * completed. */
     if ((server.aof_state == AOF_ON || server.aof_state == AOF_WAIT_REWRITE) &&
         server.aof_flush_postponed_start)
@@ -1437,7 +1439,10 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         flushAppendOnlyFile(0);
     }
 
-    /* AOF write errors: in this case we have a buffer to flush as well and
+    /* AOF写入错误：在这种情况下，我们还有一个缓冲区要刷新，并在成功的情况下清除AOF错误，
+     * 以使DB再次可写，但是，如果“hz”设置为较高的频率，则每秒尝试一次就足够了。
+     *
+     * AOF write errors: in this case we have a buffer to flush as well and
      * clear the AOF error in case of success to make the DB writable again,
      * however to try every second is enough in case of 'hz' is set to
      * a higher frequency. */
@@ -1449,10 +1454,14 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             }
     }
 
-    /* Clear the paused actions state if needed. */
+    /* 如果需要，请清除暂停的操作状态。
+     * Clear the paused actions state if needed. */
     updatePausedActions();
 
-    /* Replication cron function -- used to reconnect to master,
+    /* 复制cron功能——用于重新连接到主机、检测传输失败、启动后台RDB传输等。
+     * 如果Redis正在尝试故障切换，那么请更快地运行复制cron，以便更快地进行握手。
+     *
+     * Replication cron function -- used to reconnect to master,
      * detect transfer failures, start background RDB transfers and so forth. 
      * 
      * If Redis is trying to failover then run the replication cron faster so
@@ -3555,29 +3564,35 @@ void call(client *c, int flags) {
     dirty = server.dirty-dirty;
     if (dirty < 0) dirty = 0;
 
-    /* Update failed command calls if required. */
+    /* 如果需要，更新失败的命令调用。
+     * Update failed command calls if required. */
 
     if (!incrCommandStatsOnError(real_cmd, ERROR_COMMAND_FAILED) && c->deferred_reply_errors) {
-        /* When call is used from a module client, error stats, and total_error_replies
+        /* 当从模块客户端使用调用时，错误统计信息和total_error_rewers不会更新，因为这些错误（如果由模块处理）是内部错误，不会反映给用户。
+         * 然而，commandstats确实显示了这些调用（由RM_Call进行），因此它应该记录它们是否失败或成功。
+         * When call is used from a module client, error stats, and total_error_replies
          * isn't updated since these errors, if handled by the module, are internal,
          * and not reflected to users. however, the commandstats does show these calls
          * (made by RM_Call), so it should log if they failed or succeeded. */
         real_cmd->failed_calls++;
     }
 
-    /* After executing command, we will close the client after writing entire
+    /* 执行命令后，如果设置了“client_close_After_command”标志，我们将在写入整个回复后关闭客户端。
+     * After executing command, we will close the client after writing entire
      * reply if it is set 'CLIENT_CLOSE_AFTER_COMMAND' flag. */
     if (c->flags & CLIENT_CLOSE_AFTER_COMMAND) {
         c->flags &= ~CLIENT_CLOSE_AFTER_COMMAND;
         c->flags |= CLIENT_CLOSE_AFTER_REPLY;
     }
 
-    /* When EVAL is called loading the AOF we don't want commands called
+    /* 当调用EVAL加载AOF时，我们不希望从Lua调用的命令进入慢日志或填充统计数据。
+     * When EVAL is called loading the AOF we don't want commands called
      * from Lua to go into the slowlog or to populate statistics. */
     if (server.loading && c->flags & CLIENT_SCRIPT)
         flags &= ~(CMD_CALL_SLOWLOG | CMD_CALL_STATS);
 
-    /* If the caller is Lua, we want to force the EVAL caller to propagate
+    /* 如果调用方是Lua，如果命令标志或客户机标志强制传播，我们希望强制EVAL调用方传播脚本。
+     * If the caller is Lua, we want to force the EVAL caller to propagate
      * the script if the command flag or client flag are forcing the
      * propagation. */
     if (c->flags & CLIENT_SCRIPT && server.script_caller) {
@@ -3587,7 +3602,13 @@ void call(client *c, int flags) {
             server.script_caller->flags |= CLIENT_FORCE_AOF;
     }
 
-    /* Note: the code below uses the real command that was executed
+    /* 注意：下面的代码使用的是执行的实际命令c->cmd和c->lastcmd可能不同，
+     * 如果是MULTI-EXEC或重新编写的命令，如EXPIRE、GEOADD等。
+     *
+     * 记录此命令在主线程上引起的延迟。
+     * 除非呼叫者指示不登录。（从AOF内部处理MULTI-EXEC时发生）。
+     *
+     * Note: the code below uses the real command that was executed
      * c->cmd and c->lastcmd may be different, in case of MULTI-EXEC or
      * re-written commands such as EXPIRE, GEOADD, etc. */
 
@@ -3600,12 +3621,15 @@ void call(client *c, int flags) {
         latencyAddSampleIfNeeded(latency_event,duration/1000);
     }
 
-    /* Log the command into the Slow log if needed.
+    /* 如果需要，将命令记录到慢速日志中。
+     * 如果客户端被阻止，我们将在解除阻止时处理慢日志。
+     * Log the command into the Slow log if needed.
      * If the client is blocked we will handle slowlog when it is unblocked. */
     if ((flags & CMD_CALL_SLOWLOG) && !(c->flags & CLIENT_BLOCKED))
         slowlogPushCurrentCommand(c, real_cmd, duration);
 
-    /* Send the command to clients in MONITOR mode if applicable.
+    /* 如果适用，以MONITOR模式向客户端发送命令。管理命令被认为过于危险，无法显示。
+     * Send the command to clients in MONITOR mode if applicable.
      * Administrative commands are considered too dangerous to be shown. */
     if (!(c->cmd->flags & (CMD_SKIP_MONITOR|CMD_ADMIN))) {
         robj **argv = c->original_argv ? c->original_argv : c->argv;
@@ -3613,16 +3637,20 @@ void call(client *c, int flags) {
         replicationFeedMonitors(c,server.monitors,c->db->id,argv,argc);
     }
 
-    /* Clear the original argv.
+    /* 清除原始参数。如果客户端被阻止，我们将在解除阻止时处理慢日志。
+     *
+     * Clear the original argv.
      * If the client is blocked we will handle slowlog when it is unblocked. */
     if (!(c->flags & CLIENT_BLOCKED))
         freeClientOriginalArgv(c);
 
-    /* populate the per-command statistics that we show in INFO commandstats. */
+    /* 填充我们在INFO command stats中显示的每个命令统计信息。
+     * populate the per-command statistics that we show in INFO commandstats. */
     if (flags & CMD_CALL_STATS) {
         real_cmd->microseconds += duration;
         real_cmd->calls++;
-        /* If the client is blocked we will handle latency stats when it is unblocked. */
+        /* 如果客户端被阻塞，我们将在其被阻塞时处理延迟统计信息。
+         * If the client is blocked we will handle latency stats when it is unblocked. */
         if (server.latency_tracking_enabled && !(c->flags & CLIENT_BLOCKED))
             updateCommandLatencyHistogram(&(real_cmd->latency_histogram), duration*1000);
     }
@@ -4062,12 +4090,13 @@ int processCommand(client *c) {
      * caching metadata. */
     if (server.tracking_clients) trackingLimitUsedSlots();
 
-    /* Don't accept write commands if there are problems persisting on disk
+    /* 如果磁盘上存在问题，请不要接受写命令，除非来自我们的主机，在这种情况下，请检查复制副本忽略磁盘写错误配置以记录或崩溃。
+     * Don't accept write commands if there are problems persisting on disk
      * unless coming from our master, in which case check the replica ignore
      * disk write error config to either log or crash. */
     int deny_write_type = writeCommandsDeniedByDiskError();
     if (deny_write_type != DISK_ERROR_TYPE_NONE &&
-        (is_write_command || c->cmd->proc == pingCommand))
+        (is_write_command || c->cmd->proc == pingCommand))// 必须是写命令
     {
         if (obey_client) {
             if (!server.repl_ignore_disk_write_error && c->cmd->proc != pingCommand) {
@@ -4525,7 +4554,8 @@ int writeCommandsDeniedByDiskError(void) {
         if (server.aof_last_write_status == C_ERR) {
             return DISK_ERROR_TYPE_AOF;
         }
-        /* AOF fsync error. */
+        /* AOF fsync错误
+         * AOF fsync error. */
         int aof_bio_fsync_status;
         atomicGet(server.aof_bio_fsync_status,aof_bio_fsync_status);
         if (aof_bio_fsync_status == C_ERR) {
@@ -4540,8 +4570,8 @@ int writeCommandsDeniedByDiskError(void) {
 sds writeCommandsGetDiskErrorMessage(int error_code) {
     sds ret = NULL;
     if (error_code == DISK_ERROR_TYPE_RDB) {
-        ret = sdsdup(shared.bgsaveerr->ptr);
-    } else {
+        ret = sdsdup(shared.bgsaveerr->ptr);// 因为RDB写入失败而被拒绝
+    } else {// 因AOF写入失败或AOF后台线程刷盘是失败而拒绝
         ret = sdscatfmt(sdsempty(),
                 "-MISCONF Errors writing to the AOF file: %s\r\n",
                 strerror(server.aof_last_write_errno));

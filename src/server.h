@@ -1750,21 +1750,21 @@ struct redisServer {
     char *aof_dirname;              /* Name of the AOF directory */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
     int aof_rewrite_perc;           /* Rewrite AOF if % growth is > M and... */
-    off_t aof_rewrite_min_size;     /* the AOF file is at least N bytes. */
-    off_t aof_rewrite_base_size;    /* AOF size on latest startup or rewrite. */
-    off_t aof_current_size;         /* AOF current size (Including BASE + INCRs). */
-    off_t aof_last_incr_size;       /* The size of the latest incr AOF. */
-    off_t aof_fsync_offset;         /* AOF offset which is already synced to disk. */
-    int aof_flush_sleep;            /* Micros to sleep before flush. (used by tests) */
-    int aof_rewrite_scheduled;      /* Rewrite once BGSAVE terminates. */
-    sds aof_buf;      /* AOF buffer, written before entering the event loop */
-    int aof_fd;       /* File descriptor of currently selected AOF file */
-    int aof_selected_db; /* Currently selected DB in AOF */
+    off_t aof_rewrite_min_size;     /* AOF文件至少为N个字节。the AOF file is at least N bytes. */
+    off_t aof_rewrite_base_size;    /* 最新启动或重写时的AOF大小。AOF size on latest startup or rewrite. */
+    off_t aof_current_size;         /* AOF当前大小（包括BASE+INCR）。AOF current size (Including BASE + INCRs). */
+    off_t aof_last_incr_size;       /* 最新增量AOF的大小。The size of the latest incr AOF. */
+    off_t aof_fsync_offset;         /* 已同步到磁盘的AOF偏移量。 AOF offset which is already synced to disk. */
+    int aof_flush_sleep;            /* 在刷盘之前，先sleep。（由测试使用）.Micros to sleep before flush. (used by tests) */
+    int aof_rewrite_scheduled;      /* BGSAVE终止后重新编写。Rewrite once BGSAVE terminates. */
+    sds aof_buf;      /*AOF缓冲区，在进入事件循环之前写入. AOF buffer, written before entering the event loop */
+    int aof_fd;       /*当前所选AOF文件的文件描述符. File descriptor of currently selected AOF file */
+    int aof_selected_db; /* AOF中当前选择的数据库.Currently selected DB in AOF */
     time_t aof_flush_postponed_start; /* UNIX time of postponed AOF flush */
     time_t aof_last_fsync;            /* UNIX time of last fsync() */
     time_t aof_rewrite_time_last;   /* Time used by last AOF rewrite run. */
-    time_t aof_rewrite_time_start;  /* Current AOF rewrite start time. */
-    time_t aof_cur_timestamp;       /* Current record timestamp in AOF */
+    time_t aof_rewrite_time_start;  /* 当前AOF重写开始时间.Current AOF rewrite start time. */
+    time_t aof_cur_timestamp;       /* AOF中的当前记录时间戳.Current record timestamp in AOF */
     int aof_timestamp_enabled;      /* Enable record timestamp in AOF */
     int aof_lastbgrewrite_status;   /* C_OK or C_ERR */
     unsigned long aof_delayed_fsync;  /* delayed AOF fsync() counter */
